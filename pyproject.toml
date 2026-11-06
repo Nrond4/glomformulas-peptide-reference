@@ -15,3 +15,5 @@ google = ["google-api-python-client>=2.150,<3", "google-auth>=2.35,<3", "google-
 glo = "gloformulas.cli:main"
 [tool.setuptools.package-data]
 gloformulas = ["schema.sql"]
+[tool.setuptools]
+packages = ["gloformulas"]
