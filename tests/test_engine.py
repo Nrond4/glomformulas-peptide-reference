@@ -61,6 +61,7 @@ class EngineTests(unittest.TestCase):
  def test_docs_utf16_style_and_revision(self):
   import_guide(self.db,document());pid=self.db.execute('SELECT id FROM products').fetchone()[0];sid=source(self.db,'medical_primary_source','https://example.org/study',{})
   self.db.execute('INSERT INTO evidence VALUES(?,?,?,?,?,?,?,?,?,?)',('e',pid,'uses','Reviewed 🧬 claim',sid,'2020-01-01','human_trial','approved','Reviewer','now'))
+  self.db.execute('INSERT INTO evidence_context VALUES(?,?,?,?,?,?,?,?,?)',('e','adults','study route','human','reported outcome','Methods, page 1','Limited applicability','2099-01-01',None))
   plan=make_plan(self.db,document());self.assertEqual(plan['revision_id'],'r1');self.assertEqual(len(plan['requests']),3);r=plan['requests'][2]['updateTextStyle'];self.assertTrue(r['textStyle']['bold']);self.assertEqual(r['range']['tabId'],'t.0')
 
 if __name__=='__main__':unittest.main()

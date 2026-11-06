@@ -1,7 +1,7 @@
 """Deterministic review rules, never a certificate of clinical safety."""
 import re
 from datetime import date
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 from .core import key, encoded, source, flag, audit
 
 

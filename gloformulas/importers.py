@@ -102,23 +102,9 @@ def import_guide(db, doc):
 
 
 def import_sheet(db, sheet):
-    sid = source(db, 'supplier_sheet', SHEET_URL, sheet)
-    values = sheet.get('values', [])
-    header = next((i for i,r in enumerate(values) if r and r[0] == 'Name'), None)
-    if header is None:
-        raise ValueError('Supplier sheet header not recognized; raw snapshot preserved only if transaction commits')
-    for i, row in enumerate(values[header+1:], header+2):
-        if not row or not row[0]:
-            continue
-        links = [v for v in row[2:] if isinstance(v,str) and v.startswith('https://')]
-        for j, url in enumerate(links):
-            report_sid = source(db, 'supplier_report_link', url, {'row': i, 'cells': row, 'sheet_source_id': sid})
-            rid = key(sid,i,j)
-            db.execute('INSERT OR IGNORE INTO lab_results VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
-                       (rid,None,None,None,report_sid,'Janoshik',None,None,None,None,None,'supplier','pending',encoded({'name':row[0],'batch':row[1] if len(row)>1 else None,'url':url})))
-            flag(db,'lab_result',rid,'supplier_link_only','Report not fetched; supplier testing does not establish a GloFormulas vial or batch match.')
-    audit(db,'import_sheet',sid,{'rows':len(values)})
-    return sid
+    from .supplier import compare_supplier
+    compare_supplier(db, sheet)
+    return source(db, 'supplier_sheet', SHEET_URL, sheet)
 
 
 def import_folder(db, payload):

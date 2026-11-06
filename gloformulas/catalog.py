@@ -12,7 +12,7 @@ def validate(payload):
         if not all(p.get(x) for x in ('key','name','url')): raise ValueError('Catalog products require key, name, url')
         if p['key'] in seen: raise ValueError('Duplicate catalog key')
         seen.add(p['key'])
-        if not isinstance(p.get('sizes'),list): raise ValueError('sizes must be a list (possibly empty)')
+        if not isinstance(p.get('sizes'),list) or any(not isinstance(v,str) for v in p['sizes']): raise ValueError('sizes must be a list (possibly empty)')
     return {p['key']:p for p in items}
 
 
@@ -32,10 +32,14 @@ def compare(before, after):
 
 def import_catalog(db,payload,url='https://gloformulas.com'):
     validate(payload)
+    previous=db.execute('SELECT id,source_id,raw_json FROM catalog_snapshots ORDER BY rowid DESC LIMIT 1').fetchone()
+    if previous:
+        old=json.loads(previous['raw_json'])
+        if old.get('scope')!=payload.get('scope'):
+            raise ValueError('Catalog scope changed; review coverage before using it as a disappearance baseline')
     sid=source(db,'catalog',url,payload)
-    snapshot_id=key('snapshot',sid)
-    if db.execute('SELECT 1 FROM catalog_snapshots WHERE id=?',(snapshot_id,)).fetchone(): return []
-    previous=db.execute('SELECT raw_json FROM catalog_snapshots ORDER BY rowid DESC LIMIT 1').fetchone()
+    if previous and previous['source_id']==sid:return []
+    snapshot_id=key('snapshot',sid,previous['id'] if previous else None)
     changes=compare(json.loads(previous['raw_json']),payload) if previous else []
     db.execute('INSERT INTO catalog_snapshots VALUES(?,?,?,?,?)',(snapshot_id,sid,now(),1,encoded(payload)))
     for k,kind,before,after in changes:

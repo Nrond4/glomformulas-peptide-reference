@@ -38,11 +38,58 @@ def main():
  q=s.add_parser('check');q.add_argument('--imports',default='work/imports');q.add_argument('--report',default='work/change-report.json')
  q=s.add_parser('approve');q.add_argument('evidence_id');q.add_argument('--reviewer',required=True);q.add_argument('--quality',required=True);q.add_argument('--publication-date',required=True)
  q=s.add_parser('add-evidence');q.add_argument('file')
+ q=s.add_parser('daily');q.add_argument('--state',default='work');q.add_argument('--live',action='store_true')
+ q=s.add_parser('catalog-live');q.add_argument('--adapter',default='auto',choices=['auto','sitemap','woocommerce','shopify'])
+ q=s.add_parser('freedom-live');q.add_argument('--code',action='append',default=[]);q.add_argument('--rendered',action='store_true')
+ q=s.add_parser('supplier-compare');q.add_argument('file')
+ q=s.add_parser('supplier-fetch')
+ q=s.add_parser('research-discover');q.add_argument('product_id');q.add_argument('--limit',type=int,default=100)
+ q=s.add_parser('research-import');q.add_argument('product_id');q.add_argument('file')
+ q=s.add_parser('evidence-context');q.add_argument('file')
+ q=s.add_parser('interaction-add');q.add_argument('file')
+ q=s.add_parser('interaction-review');q.add_argument('interaction_id');q.add_argument('--reviewer',required=True)
+ s.add_parser('research-status');s.add_parser('schedule-status')
  args=p.parse_args();logging.basicConfig(level=logging.INFO,format='%(levelname)s %(message)s');db=connect(args.db)
  try:
   with db:
    c=args.command
-   if c=='import':result={'source':IMPORTERS[args.kind](db,json.loads(Path(args.file).read_text()))}
+   if c=='daily':
+    from .daily import daily
+    result=daily(db,args.state,args.live)
+   elif c=='catalog-live':
+    from .live_catalog import CatalogCrawler
+    payload=CatalogCrawler().run(args.adapter);changes=import_catalog(db,payload);result={'products':len(payload['products']),'changes':len(changes),'scope':payload['scope']}
+   elif c=='freedom-live':
+    from .freedom import FreedomClient,browser_lookup
+    result=FreedomClient(rendered=browser_lookup if args.rendered else None).collect(db,args.code)
+   elif c=='supplier-compare':
+    from .supplier import compare_supplier
+    result={'changes':compare_supplier(db,json.loads(Path(args.file).read_text()))}
+   elif c=='supplier-fetch':
+    from .supplier import compare_supplier,fetch_public_sheet
+    result={'changes':compare_supplier(db,fetch_public_sheet())}
+   elif c=='research-discover':
+    from .research import discover
+    result=discover(db,args.product_id,max_results=args.limit)
+   elif c=='research-import':
+    from .research import ingest_articles
+    result=ingest_articles(db,args.product_id,json.loads(Path(args.file).read_text()))
+   elif c=='evidence-context':
+    from .research import set_context
+    set_context(db,json.loads(Path(args.file).read_text()));result={'context':'saved; approval reset to pending'}
+   elif c=='interaction-add':
+    from .research import add_interaction
+    result={'interaction_id':add_interaction(db,json.loads(Path(args.file).read_text()))}
+   elif c=='interaction-review':
+    from .research import approve_interaction
+    approve_interaction(db,args.interaction_id,args.reviewer);result={'reviewed':args.interaction_id}
+   elif c=='research-status':
+    from .research import coverage_report
+    result=coverage_report(db)
+   elif c=='schedule-status':
+    from .daily import schedule_status
+    result=schedule_status()
+   elif c=='import':result={'source':IMPORTERS[args.kind](db,json.loads(Path(args.file).read_text()))}
    elif c=='verify':result=record_report(db,json.loads(Path(args.file).read_text()),args.url)
    elif c=='guide':Path(args.output).write_text(render(db));result={'draft':args.output}
    elif c=='docs-plan':
@@ -60,6 +107,7 @@ def main():
    elif c=='check':result=check(db,args.imports,args.report)
    else:result=status(db)
   print(json.dumps(result,ensure_ascii=False,indent=2))
+  if isinstance(result,dict) and result.get("status") in ("partial","blocked","failed"):raise SystemExit(2)
  except Exception as exc:
   logging.error('%s: %s',type(exc).__name__,exc);raise SystemExit(1)
  finally:db.close()

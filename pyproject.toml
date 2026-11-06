@@ -3,11 +3,13 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 [project]
 name = "gloformulas-reference"
-version = "0.1.0"
+version = "0.2.0"
 requires-python = ">=3.11"
 description = "Provenance-first living peptide reference database"
 dependencies = []
 [project.optional-dependencies]
+lab = ["pypdf>=5,<7"]
+browser = ["playwright>=1.48,<2"]
 google = ["google-api-python-client>=2.150,<3", "google-auth>=2.35,<3", "google-auth-oauthlib>=1.2,<2"]
 [project.scripts]
 glo = "gloformulas.cli:main"
