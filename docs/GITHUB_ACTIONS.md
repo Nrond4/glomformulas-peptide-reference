@@ -27,20 +27,11 @@ Do not put the key in a repository file, workflow input, issue, chat, screenshot
 
 ### 3. Transfer the existing database once, securely
 
-The existing database is deliberately not committed to Git. GitHub cannot compare against it until it receives a protected copy. A normal clone contains the program but does not contain the private `work/` directory.
+**Using Codex Cloud in a browser? Use the [browser-only transfer steps](BROWSER_TRANSFER.md).** No terminal, key sharing or raw database download is needed. After merging the transfer workflow, run **Secure Browser Database Transfer → Prepare transfer**, send Codex the successful run link, then run **Finish transfer** after Codex confirms the encrypted upload. Finish verifies all 46 original records and automatically attaches `monitor-seed.enc` to the `monitor-seed` release.
 
-Use the original private workspace, which contains `work/reference.sqlite`, `work/source-config.json` and the saved imports. From the project directory, run:
+The original database remains in the private workspace until Codex encrypts it for the public recipient created by Prepare. The workspace never needs access to your `GLO_STATE_KEY`. Only encrypted research bytes leave the workspace; the repository secret and encrypted private recipient key stay on the GitHub side. Do not create an empty substitute or upload the raw `reference.sqlite` file.
 
-```sh
-python -m pip install '.[monitor]'
-python -m gloformulas.actions_monitor seed --state work --output work/monitor-seed.enc
-```
-
-The helper asks for the same encryption key without displaying it. It takes a consistent backup of the real database and includes only the approved source snapshots/settings. It rejects an empty baseline and excludes credential files. The result is `work/monitor-seed.enc`. **Only this encrypted file may be uploaded.** Never upload `reference.sqlite`, raw imports, source settings, `.env`, or the key to the public repository.
-
-In GitHub, open **Releases → Draft a new release**. Create a tag named `monitor-seed`, attach `monitor-seed.enc`, and publish the release. The ciphertext may be public; the encryption key stays in repository Secrets and your password manager. This release is a one-time transfer/backup, not another paid service. No seed file or encryption key has been generated/uploaded on your behalf; the existing private database remains in the original workspace until this step is completed.
-
-If your private workspace is no longer available, recover its private backup first. Do not click through an empty database as a substitute. A supported re-import of the original sources is another recovery option, with explicit notice that the old comparison history has not been recovered.
+If a normal private terminal is available, the existing `actions_monitor seed` helper remains an alternative. It is not required for the browser-only method.
 
 ### 4. Test with “Run Now”
 

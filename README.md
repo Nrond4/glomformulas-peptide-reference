@@ -4,6 +4,8 @@ This system preserves the original peptide guide, watches for source changes, an
 
 **The original Google Doc has not been changed. A GitHub Actions daily workflow is now prepared for 8:00 AM Mountain Time, but activation and a scheduled execution are not yet confirmed.**
 
+For Codex Cloud without a terminal, use the [browser-only encrypted database transfer](docs/BROWSER_TRANSFER.md). GitHub prepares a public recipient, Codex uploads only ciphertext, and Actions creates the standard seed without revealing the repository secret.
+
 Use [Activate daily GitHub monitoring](docs/GITHUB_ACTIONS.md) for the exact setup and manual Run Now steps. It requires no paid host: one encryption secret and a one-time encrypted transfer of the existing private database keep state secure in this public repository. The public repository contains code and synthetic tests; private source data, Google file IDs, reports, database files, and credentials stay out of Git.
 
 ## What is built
