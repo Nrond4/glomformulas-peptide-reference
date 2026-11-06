@@ -102,3 +102,5 @@ The optional `GLO_SOURCE_CONFIG_JSON` repository **secret** can override approve
 - [GitHub schedule syntax, timezone and daylight-saving support](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#onschedule)
 - [Artifact access and retention](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/download-workflow-artifacts)
 - [GitHub artifact API](https://docs.github.com/en/rest/actions/artifacts)
+
+If a repeat run fails before source checks, inspect its fixed `Setup diagnostic` category in the restore-step log. The artifact ZIP API uses GitHub JSON negotiation; release-asset downloads use octet-stream. Neither path forwards the job token to signed storage URLs. Do not reinitialize or change keys merely because a download failed.

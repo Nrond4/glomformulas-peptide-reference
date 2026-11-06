@@ -69,6 +69,20 @@ class ActionsTests(unittest.TestCase):
         self.assertIn('cat "$GLO_OUT_DIR/summary.md" | tee -a "$GITHUB_STEP_SUMMARY"',text)
         self.assertNotIn('cat "$GLO_OUT_DIR/monitor-result.json"',text)
         self.assertNotIn('cat "$GLO_OUT_DIR/private-run.log"',text)
+    def test_artifact_and_release_downloads_use_their_own_media_types(self):
+        from gloformulas.actions_store import GitHubStore
+        import urllib.error
+        store=GitHubStore('owner/repo','synthetic-token')
+        target='https://results.blob.core.windows.net/signed'
+        for path,media in [('/repos/owner/repo/actions/artifacts/123/zip','application/vnd.github+json'),('/repos/owner/repo/releases/assets/456','application/octet-stream')]:
+            with patch.object(store.opener,'open',side_effect=urllib.error.HTTPError('https://api.github.com',302,'Redirect',{'Location':target},None)) as opened,patch.object(store,'download_redirect',return_value=b'encrypted'):
+                self.assertEqual(store.request(path,binary=True),b'encrypted')
+                self.assertEqual(opened.call_args.args[0].headers['Accept'],media)
+    def test_restore_diagnostic_never_echoes_private_error_text(self):
+        from gloformulas.actions_monitor import public_setup_diagnostic
+        self.assertEqual(public_setup_diagnostic(StateError('GitHub state request failed (HTTP 415); baseline was not reset')),'artifact_http_415')
+        self.assertEqual(public_setup_diagnostic(StateError('Encryption key mismatch or corrupted file; no state was replaced')),'state_authentication_failed')
+        self.assertEqual(public_setup_diagnostic(ValueError('PRIVATE_TOKEN https://private.example')),'state_restore_failed')
     def test_mountain_schedule_winter_summer_and_dst_dates(self):
         zone=ZoneInfo('America/Boise')
         for day,hour in [('2026-01-15',15),('2026-07-15',14),('2026-03-08',14),('2026-11-01',15)]:

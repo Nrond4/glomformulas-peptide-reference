@@ -83,6 +83,47 @@ def public_diagnostics(component,detail,status):
     return sorted(codes)[:8]
 
 
+SETUP_DIAGNOSTICS={
+    'artifact_api_rejected':'GitHub rejected the encrypted-state request; inspect Actions read permission or API media-type compatibility.',
+    'artifact_api_unavailable':'GitHub state storage could not be reached; the saved baseline was not reset.',
+    'state_missing':'No prior encrypted database was found; explicit first-run initialization is required.',
+    'artifact_expired':'Saved state has expired; recover the existing encrypted backup.',
+    'artifact_redirect_rejected':'Encrypted-state storage redirected to an unapproved host.',
+    'artifact_download_failed':'The encrypted artifact could not be downloaded.',
+    'artifact_format_invalid':'Downloaded state did not have the expected archive format.',
+    'state_authentication_failed':'State could not be authenticated with the configured key; no empty replacement was created.',
+    'state_envelope_invalid':'State is corrupt, oversized, or not the expected encrypted file.',
+    'key_missing_or_invalid':'Repository encryption secret is missing or does not meet the required format.',
+    'state_restore_failed':'Database restore stopped safely; no empty replacement was created.',
+}
+
+for _code in ('401','403','404','410','415','429','500','502','503','504'):
+    SETUP_DIAGNOSTICS['artifact_http_'+_code]='GitHub encrypted-state API returned HTTP '+_code+'. The stored baseline was not reset.'
+
+
+def public_setup_diagnostic(exc):
+    """Only fixed categories escape to public logs; raw exception strings never do."""
+    text=str(exc)
+    status=re.search(r'GitHub state request failed \(HTTP (401|403|404|410|415|429|500|502|503|504)\)',text)
+    if status:return 'artifact_http_'+status[1]
+    if 'GitHub state request failed (HTTP ' in text:return 'artifact_api_rejected'
+    known={
+        'GitHub state storage unavailable; baseline was not reset':'artifact_api_unavailable',
+        'Unexpected GitHub storage redirect':'artifact_redirect_rejected',
+        'GitHub encrypted artifact download failed':'artifact_download_failed',
+        'Unexpected state artifact contents':'artifact_format_invalid',
+        'Corrupted GitHub state artifact':'artifact_format_invalid',
+        'Encryption key mismatch or corrupted file; no state was replaced':'state_authentication_failed',
+        'Invalid encrypted file; no state was replaced':'state_envelope_invalid',
+        'Repository secret GLO_STATE_KEY is missing':'key_missing_or_invalid',
+        'GLO_STATE_KEY must be a random secret of at least 32 characters':'key_missing_or_invalid',
+    }
+    if text in known:return known[text]
+    if text.startswith('No existing database artifact.'):return 'state_missing'
+    if text.startswith('The last database artifact expired;'):return 'artifact_expired'
+    return 'state_restore_failed'
+
+
 def stamp(moment=None):
     return (moment or datetime.now(ZONE)).astimezone(ZONE).strftime('%Y-%m-%d_%H%M%S_%Z')
 
@@ -238,7 +279,10 @@ def main():
                     dest=Path(args.output)/name;dest.parent.mkdir(parents=True,exist_ok=True);dest.write_bytes(archive.read(name))
             print('Detailed report decrypted locally. Keep these files private.')
         return 0
-    except Exception:
+    except Exception as exc:
+        if args.command=='restore':
+            code=public_setup_diagnostic(exc)
+            print(f'Setup diagnostic: {code}. {SETUP_DIAGNOSTICS[code]}',file=sys.stderr)
         # No raw API errors, private URLs, source settings, signed URLs or secrets in public logs.
         print('Monitoring setup/state operation failed. Check the activation guide, key, seed, artifact retention and failed step. The database was not replaced with an empty baseline.',file=sys.stderr)
         return 1
