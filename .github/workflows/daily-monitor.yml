@@ -118,7 +118,7 @@ jobs:
       - name: Show safe summary
         if: always() && steps.paths.outcome == 'success'
         shell: bash
-        run: cat "$GLO_OUT_DIR/summary.md" >> "$GITHUB_STEP_SUMMARY"
+        run: cat "$GLO_OUT_DIR/summary.md" | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Flag incomplete source checks
         if: always() && steps.checks.outcome != 'success'
         run: |

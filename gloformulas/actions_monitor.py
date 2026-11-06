@@ -5,6 +5,7 @@ import getpass
 import io
 import json
 import os
+import re
 import sys
 import zipfile
 from datetime import datetime
@@ -27,6 +28,61 @@ REASONS={
 }
 
 
+DIAGNOSTICS={
+    'http_401':'Source requires authorization.',
+    'http_403':'Source denied the automated request.',
+    'http_404':'Source endpoint was not found.',
+    'http_429':'Source rate limit was reached.',
+    'http_500':'Source returned a server error.',
+    'http_502':'Source returned a gateway error.',
+    'http_503':'Source is temporarily unavailable.',
+    'http_504':'Source gateway timed out.',
+    'connection_unavailable':'Network/TLS connection could not be established.',
+    'lookup_timeout':'Freedom lookup did not produce the expected page element or PDF in time.',
+    'source_timeout':'Source request timed out.',
+    'catalog_xml_unreadable':'Catalog sitemap was not readable XML.',
+    'source_json_unreadable':'Source response was not readable JSON.',
+    'robots_excluded':'Source robots rules exclude the requested catalog path.',
+    'catalog_schema_unrecognized':'Readable product data or expected catalog schema was missing.',
+    'catalog_incomplete':'Catalog totals, scope or pagination could not be verified.',
+    'supplier_private_or_non_csv':'Supplier export requires access or did not return readable CSV.',
+    'supplier_header_missing':'Supplier spreadsheet layout was not recognized.',
+    'freedom_results_unreadable':'Lookup returned no readable official PDF links.',
+    'snapshot_missing':'A required saved source snapshot is missing.',
+    'optional_dependency_missing':'An optional source-reading dependency is unavailable.',
+    'source_not_configured':'This source has not been selected/configured for unattended checks.',
+    'unclassified_source_error':'Source check did not complete; raw details remain encrypted.',
+}
+
+
+def public_diagnostics(component,detail,status):
+    """Map private error text to fixed public categories; never echo text or source URLs."""
+    if not isinstance(detail,dict):return []
+    reasons=[]
+    if isinstance(detail.get('reason'),str):reasons.append(detail['reason'][:1000])
+    failures=detail.get('failures',[])
+    if isinstance(failures,list):
+        reasons += [f['reason'][:1000] for f in failures[:20] if isinstance(f,dict) and isinstance(f.get('reason'),str)]
+    codes=set()
+    for reason in reasons:
+        for code in re.findall(r'\bHTTP[ :]+(401|403|404|429|500|502|503|504)\b',reason,re.I):codes.add('http_'+code)
+        if 'connection unavailable' in reason.lower():codes.add('connection_unavailable')
+        if 'TimeoutError' in reason or 'timed out' in reason.lower():codes.add('lookup_timeout' if component=='freedom' else 'source_timeout')
+        if reason=='ParseError':codes.add('catalog_xml_unreadable' if component=='catalog' else 'unclassified_source_error')
+        if reason=='JSONDecodeError':codes.add('source_json_unreadable')
+        if 'disallowed by robots.txt' in reason:codes.add('robots_excluded')
+        if any(t in reason for t in ('structured data','structured product data','Unrecognized WooCommerce','Unrecognized Shopify','Unrecognized sitemap')):codes.add('catalog_schema_unrecognized')
+        if any(t in reason for t in ('pagination','page limit','scope changed','total missing','scan incomplete','page budget')):codes.add('catalog_incomplete')
+        if 'not public CSV' in reason:codes.add('supplier_private_or_non_csv')
+        if 'Supplier header missing' in reason:codes.add('supplier_header_missing')
+        if 'No readable lab PDF results' in reason:codes.add('freedom_results_unreadable')
+        if 'Required private source snapshot is missing' in reason:codes.add('snapshot_missing')
+        if 'No module named' in reason:codes.add('optional_dependency_missing')
+    if status=='not_configured':codes.add('source_not_configured')
+    if status in ('blocked','failed','partial') and not codes:codes.add('unclassified_source_error')
+    return sorted(codes)[:8]
+
+
 def stamp(moment=None):
     return (moment or datetime.now(ZONE)).astimezone(ZONE).strftime('%Y-%m-%d_%H%M%S_%Z')
 
@@ -47,7 +103,13 @@ def public_summary(result):
         if name not in COMPONENTS:continue
         state=state if state in STATUSES else 'failed'
         lines.append(f'- {name}: **{state}**. {REASONS.get(state,"See encrypted details.")}')
-    if not result.get('checks'):lines.append('- Checks did not complete. Check the failed setup/run step and the activation instructions.')
+        for code in public_diagnostics(name,check.get('detail',{}),state):
+            lines.append(f'  - Diagnostic: {code}. {DIAGNOSTICS[code]}')
+    if not result.get('checks'):
+        lines.append('- Checks did not complete. Check the failed setup/run step and the activation instructions.')
+        types={'ValueError':'invalid_monitor_input','TypeError':'monitor_type_error','OperationalError':'database_operation_failed','FileNotFoundError':'required_file_missing'}
+        code=types.get(result.get('error_type'))
+        if code:lines.append(f'- Monitor diagnostic: {code}. Details remain encrypted.')
     setup=result.get('setup_issue')
     if setup in ('dependency_installation','browser_installation','baseline_restore'):
         lines.append(f'- Setup error: {setup}. Check the activation guide and this failed step; source checks were not run.')
