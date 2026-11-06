@@ -33,7 +33,7 @@ def encrypt(body,password,kind='state'):
     from cryptography.hazmat.primitives.ciphers.aead import AESGCM
     from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
     validate_key(password)
-    if kind not in ('state','report') or len(body)>MAX_PLAINTEXT:
+    if kind not in ('state','report','transfer-key') or len(body)>MAX_PLAINTEXT:
         raise StateError('Invalid or oversized encryption input')
     header=('GLOM1:'+kind+'\n').encode();salt=os.urandom(16);nonce=os.urandom(12)
     key=Scrypt(salt=salt,length=32,n=2**15,r=8,p=1).derive(password.encode())
@@ -64,7 +64,7 @@ def check_database(path):
         if not counts['products'] and not counts['catalog_snapshots']:raise StateError('Baseline has no product records or catalog snapshots; refusing an empty seed')
 
 
-def pack_state(root,password):
+def state_archive(root):
     root=Path(root);check_database(root/'reference.sqlite')
     # sqlite backup captures WAL safely. No token, environment dump or credential file is included.
     output=io.BytesIO()
@@ -82,13 +82,23 @@ def pack_state(root,password):
     if sum(map(len,entries.values()))>MAX_PLAINTEXT:raise StateError('State reached the configured storage limit; preserve the previous artifact and review retention')
     with zipfile.ZipFile(output,'w',compression=zipfile.ZIP_DEFLATED) as archive:
         for name,value in entries.items():archive.writestr(name,value)
-    body=encrypt(output.getvalue(),password)
+    body=output.getvalue()
+    if len(body)>MAX_ARCHIVE:raise StateError('State archive exceeded the storage limit')
+    return body
+
+
+def pack_state(root,password):
+    body=encrypt(state_archive(root),password)
     if len(body)>MAX_ARCHIVE:raise StateError('Encrypted state exceeded the storage limit')
     return body
 
 
 def restore_state(body,password,root):
-    plaintext=decrypt(body,password)
+    return restore_archive(decrypt(body,password),root)
+
+
+def restore_archive(plaintext,root):
+    if len(plaintext)>MAX_ARCHIVE:raise StateError('State archive exceeded the storage limit')
     try:
         with zipfile.ZipFile(io.BytesIO(plaintext)) as archive:
             names=archive.namelist()

@@ -1,0 +1,110 @@
+name: Secure Browser Database Transfer
+run-name: Secure database transfer — ${{ inputs.phase }}
+on:
+  workflow_dispatch:
+    inputs:
+      phase:
+        description: 'Prepare a secure transfer, or finish after Codex uploads the encrypted database'
+        type: choice
+        required: true
+        default: Prepare transfer
+        options:
+          - Prepare transfer
+          - Finish transfer
+      session:
+        description: 'Finish only: session ID from the successful Prepare transfer summary'
+        type: string
+        required: false
+permissions:
+  contents: read
+concurrency:
+  group: gloformulas-initial-seed-transfer
+  cancel-in-progress: false
+jobs:
+  transfer:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      # Needed only to publish public-key/encrypted assets to this repository's Releases.
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install '.[monitor]'
+      - name: Validate browser selection
+        env:
+          PHASE: ${{ inputs.phase }}
+          SESSION_INPUT: ${{ inputs.session }}
+        shell: bash
+        run: |
+          umask 077
+          if [[ "$PHASE" == 'Prepare transfer' ]]; then
+            session="$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          elif [[ "$PHASE" == 'Finish transfer' && "$SESSION_INPUT" =~ ^[0-9]+-[0-9]+$ ]]; then
+            session="$SESSION_INPUT"
+          else
+            echo 'Choose a phase and provide the Prepare transfer session ID when finishing.'
+            exit 1
+          fi
+          echo "TRANSFER_SESSION=$session" >> "$GITHUB_ENV"
+          echo "TRANSFER_TAG=glo-transfer-$session" >> "$GITHUB_ENV"
+          echo "TRANSFER_DIR=$RUNNER_TEMP/glo-transfer" >> "$GITHUB_ENV"
+      - name: Generate public recipient and encrypted private key
+        if: inputs.phase == 'Prepare transfer'
+        env:
+          GLO_STATE_KEY: ${{ secrets.GLO_STATE_KEY }}
+        run: python -m gloformulas.browser_transfer prepare --repository "$GITHUB_REPOSITORY" --session "$TRANSFER_SESSION" --out "$TRANSFER_DIR"
+      - name: Publish public recipient and encrypted key assets
+        if: inputs.phase == 'Prepare transfer'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          gh release create "$TRANSFER_TAG" --repo "$GITHUB_REPOSITORY" --target main --title "Temporary secure transfer $TRANSFER_SESSION" --notes 'Public encryption recipient and encrypted private key only. No plaintext database or repository secret is included. Session expires in seven days.'
+          gh release upload "$TRANSFER_TAG" "$TRANSFER_DIR/transfer-public.json" "$TRANSFER_DIR/transfer-private.enc" --repo "$GITHUB_REPOSITORY"
+          {
+            echo '# Secure transfer is prepared'
+            echo "Session: **$TRANSFER_SESSION**"
+            echo 'Return to Codex with this run link. No key, terminal, download or database upload is needed from you.'
+            echo 'After Codex confirms its encrypted upload, run this workflow again with Finish transfer and this session ID.'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Download encrypted transfer and wrapped key only
+        if: inputs.phase == 'Finish transfer'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          umask 077
+          mkdir -p "$TRANSFER_DIR"
+          gh release download "$TRANSFER_TAG" --repo "$GITHUB_REPOSITORY" --pattern transfer-public.json --pattern transfer-private.enc --dir "$TRANSFER_DIR"
+          # Read data from the transfer branch; never check out or execute its code.
+          gh api "repos/$GITHUB_REPOSITORY/contents/transfer/database.glo-transfer.json?ref=seed-transfer%2F$TRANSFER_SESSION" -H 'Accept: application/vnd.github.raw+json' > "$TRANSFER_DIR/database.glo-transfer.json"
+      - name: Verify all 46 records and create standard encrypted seed
+        if: inputs.phase == 'Finish transfer'
+        env:
+          GLO_STATE_KEY: ${{ secrets.GLO_STATE_KEY }}
+        run: python -m gloformulas.browser_transfer complete --transfer "$TRANSFER_DIR/database.glo-transfer.json" --keys "$TRANSFER_DIR" --repository "$GITHUB_REPOSITORY" --session "$TRANSFER_SESSION" --output "$TRANSFER_DIR/monitor-seed.enc"
+      - name: Publish encrypted seed without overwriting an existing seed
+        if: inputs.phase == 'Finish transfer'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          if gh release view monitor-seed --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            # No --clobber: an existing seed asset must never be overwritten silently.
+            gh release upload monitor-seed "$TRANSFER_DIR/monitor-seed.enc" --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create monitor-seed "$TRANSFER_DIR/monitor-seed.enc" --repo "$GITHUB_REPOSITORY" --target main --title 'Encrypted GloFormulas monitoring baseline' --notes 'Verified encrypted baseline containing the existing 46 imported product records. No plaintext research database or credential is published.'
+          fi
+          {
+            echo '# Encrypted baseline is ready'
+            echo 'All 46 original product records, table counts and database integrity were verified.'
+            echo 'monitor-seed.enc is attached to the monitor-seed release. No plaintext database or key was uploaded.'
+            echo 'Next: run GloFormulas Daily Monitor on main with first-run seed initialization selected.'
+            echo 'This temporary transfer workflow can now be disabled from its Actions menu. Keep GLO_STATE_KEY for daily monitoring.'
+          } >> "$GITHUB_STEP_SUMMARY"
