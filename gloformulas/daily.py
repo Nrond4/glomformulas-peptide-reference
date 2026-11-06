@@ -1,5 +1,6 @@
 """Independent source checks with honest partial/offline outcomes and private summaries."""
 import json
+import os
 import subprocess
 from pathlib import Path
 from .core import encoded,key,now,audit
@@ -18,6 +19,9 @@ def save_json(path,payload):
 
 
 def schedule_status():
+    if os.environ.get('GLO_ACTIONS_MONITOR')=='1':
+        scheduled=os.environ.get('GITHUB_EVENT_NAME')=='schedule'
+        return {'provider':'github_actions','hosting_confirmed':True,'daily_schedule_confirmed':scheduled,'schedule_configured':'8:00 AM America/Boise','detail':'This is a scheduled GitHub Actions execution.' if scheduled else 'Manual GitHub Actions execution; the 8:00 AM Mountain schedule has not been observed in this run.'}
     result={'hosting_confirmed':False,'daily_schedule_confirmed':False,'detail':'No active scheduler has been confirmed. Prepared code does not mean daily checks are running.'}
     try:
         enabled=subprocess.run(['systemctl','is-enabled','gloformulas.timer'],capture_output=True,text=True,timeout=3)

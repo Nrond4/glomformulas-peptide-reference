@@ -10,3 +10,4 @@ token*.json
 service-account*.json
 build/
 dist/
+*.enc

@@ -78,7 +78,7 @@ class Phase2Tests(unittest.TestCase):
         with self.assertRaises(ValueError):CatalogCrawler(http).run('sitemap')
     def test_woocommerce_total_and_pagination(self):
         b='https://gloformulas.com';u=b+'/wp-json/wc/store/v1/products?per_page=100&page=1';rows=[{'id':1,'name':'Example','permalink':b+'/product/a','attributes':[{'name':'Size','terms':[{'name':'10mg'}]}],'is_in_stock':False}]
-        h=FakeHTTP({b+'/robots.txt':'User-agent: *\nAllow: /',u:Response(u,json.dumps(rows).encode(),{'x-wp-total':'1'})})
+        h=FakeHTTP({b+'/robots.txt':'User-agent: *\nAllow: /',u:Response(u,json.dumps(rows).encode(),{'x-wp-total':'1'}),b+'/product/a':'<p>Product page without a posted COA</p>'})
         result=CatalogCrawler(h).run('woocommerce');self.assertEqual(result['products'][0]['sizes'],['10mg']);self.assertEqual(result['products'][0]['availability'],'out_of_stock')
     def test_woocommerce_missing_total_not_complete(self):
         b='https://gloformulas.com';u=b+'/wp-json/wc/store/v1/products?per_page=100&page=1';h=FakeHTTP({b+'/robots.txt':'User-agent: *\nAllow: /',u:[]})
