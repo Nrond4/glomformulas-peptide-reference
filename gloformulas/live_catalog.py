@@ -16,17 +16,21 @@ HOSTS = {'gloformulas.com','www.gloformulas.com'}
 
 class Page(HTMLParser):
     def __init__(self, content):
-        super().__init__(); self.scripts=[];self.links=[];self.forms=[];self._script=None;self._form=None
+        super().__init__(); self.scripts=[];self.links=[];self.anchors=[];self.forms=[];self._script=None;self._form=None;self._anchor=None
         self.feed(content)
     def handle_starttag(self, tag, attrs):
         a=dict(attrs)
         if tag=='script' and a.get('type','').split(';')[0]=='application/ld+json': self._script=[]
-        if tag=='a' and a.get('href'): self.links.append(a['href'])
+        if tag=='a' and a.get('href'):
+            self.links.append(a['href']);self._anchor=[a['href'],[]]
         if tag=='form': self._form=dict(a,inputs=[])
         if tag in ('input','select','button') and self._form is not None: self._form['inputs'].append(a)
     def handle_data(self, data):
+        if self._anchor is not None:self._anchor[1].append(data)
         if self._script is not None:self._script.append(data)
     def handle_endtag(self,tag):
+        if tag=='a' and self._anchor is not None:
+            self.anchors.append((self._anchor[0],' '.join(self._anchor[1])));self._anchor=None
         if tag=='script' and self._script is not None:
             self.scripts.append(''.join(self._script));self._script=None
         if tag=='form' and self._form is not None:self.forms.append(self._form);self._form=None
@@ -38,6 +42,17 @@ def objects(value):
         for v in value.values():yield from objects(v)
     elif isinstance(value,list):
         for v in value:yield from objects(v)
+
+
+def coa_links(content,page_url):
+    # These are candidate links, never verified report results or product/batch matches.
+    result=set()
+    for href,label in Page(content).anchors:
+        target=url.urljoin(page_url,href);parsed=url.urlparse(target)
+        if parsed.scheme!='https' or parsed.username or parsed.password:continue
+        if parsed.path.lower().endswith('.pdf') or re.search(r'coa|certificate|lab[-_ ]?(?:test|result)|report',parsed.path+' '+label,re.I):
+            result.add(target)
+    return sorted(result)
 
 
 def product_data(content,page_url):
@@ -58,7 +73,7 @@ def product_data(content,page_url):
             for value in [obj.get('name','')]+[str(o.get('name','')) for o in offers]:
                 sizes.update(re.findall(r'\b\d+(?:\.\d+)?\s*(?:mg|mcg|IU|mL)\b',value,re.I))
             product_url=url.urljoin(page_url,obj.get('url') or page_url)
-            products.append({'key':str(obj.get('productID') or obj.get('sku') or product_url),'name':html.unescape(obj['name']), 'url':product_url,'sizes':sorted(sizes), 'availability':sorted({str(o['availability']).rsplit('/',1)[-1] for o in offers if o.get('availability')}),'listing_hash':key(obj)})
+            products.append({'key':str(obj.get('productID') or obj.get('sku') or product_url),'name':html.unescape(obj['name']), 'url':product_url,'sizes':sorted(sizes), 'availability':sorted({str(o['availability']).rsplit('/',1)[-1] for o in offers if o.get('availability')}),'listing_hash':key(obj),'coa_links':coa_links(content,page_url)})
     return products
 
 
@@ -141,6 +156,11 @@ class CatalogCrawler:
                 if not rows and re.search(r'/products?/[^/]+',url.urlparse(target).path):raise ValueError('Product page missing readable structured data; rendered browser adapter needed')
                 products.extend(rows)
             scope='published-sitemap-products'
+        if mode in ('woocommerce','shopify'):
+            if len(products)+len(self.observations)>self.max_pages:raise ValueError('Product/COA page budget reached; scan incomplete')
+            for p in products:
+                page=self.fetch(p['url']).text
+                p['coa_links']=coa_links(page,p['url'])
         # Multiple pages may repeat the same Product; conflicting repetitions invalidate the scan.
         unique={}
         for p in products:

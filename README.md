@@ -2,7 +2,9 @@
 
 This system preserves the original peptide guide, watches for source changes, and keeps a reviewable research record. It never turns a laboratory certificate into a claim that a product is sterile, safe, effective, or safe to combine with another peptide.
 
-**The original Google Doc has not been changed. Daily automation is not active or confirmed.** The public repository contains code and synthetic tests; private source data, Google file IDs, reports, database files, and credentials stay out of Git.
+**The original Google Doc has not been changed. A GitHub Actions daily workflow is now prepared for 8:00 AM Mountain Time, but activation and a scheduled execution are not yet confirmed.**
+
+Use [Activate daily GitHub monitoring](docs/GITHUB_ACTIONS.md) for the exact setup and manual Run Now steps. It requires no paid host: one encryption secret and a one-time encrypted transfer of the existing private database keep state secure in this public repository. The public repository contains code and synthetic tests; private source data, Google file IDs, reports, database files, and credentials stay out of Git.
 
 ## What is built
 
@@ -12,14 +14,14 @@ This system preserves the original peptide guide, watches for source changes, an
 | Freedom Diagnostics checker | Searches the official lookup, accepts only GLO-prefixed report codes, downloads official-host PDFs, preserves original bytes and extracts printed fields | PDF extraction and all review rules tested. Actual search results and the optional rendered search adapter still need a live compatibility check |
 | Supplier comparison | Compares products, batches, and report links; ignores row movement; keeps supplier evidence separate | Tested with simulated changes and a fresh read of the real connected spreadsheet; no changes found in that read |
 | Evidence and interaction tracker | Stores source dates, study context, evidence quality, source locations, limitations, review dates and interactions | Tested. Original claims remain pending; the literature discovery adapter still needs live endpoint validation and actual medical source review |
-| Daily checks | Runs sources independently, records failures, creates a plain-language change summary and a private draft | Tested with simulated live services and saved real source snapshots; no scheduler installed or activated |
+| Daily checks | Runs sources independently, restores encrypted GitHub state, and creates dated summaries/private details | Tested locally with simulated live services and saved real snapshots; GitHub activation still required |
 | Original guide protection | Daily checks never call the Google Docs publishing function | Original unchanged; current proposed update plan has zero edits |
 
 A failed or incomplete catalog scan does not mean products were discontinued. A missing search result does not mean a COA does not exist. A matching supplier batch does not prove that a particular GloFormulas vial was tested. These uncertainties appear in the review record.
 
 ## What you will eventually need to connect
 
-No paid hosting is required to build or test this system. To make it run daily, choose an existing computer that can stay on, or another private machine you control. The prepared schedule is a template until installed, enabled, and checked on that machine.
+No paid hosting is required. The new GitHub Actions workflow can provide the daily computer: follow the activation guide rather than installing the older local systemd timer. An existing private computer remains an alternative. GitHub scheduling is not active/confirmed until the workflow is merged, initialized, enabled and observed.
 
 1. **Website access:** that machine needs permission to reach GloFormulas, Freedom Diagnostics, and Europe PMC. This workspace currently restricts those network destinations. A successful live check must confirm each website's actual structure before treating an adapter as operational.
 2. **Google access, only when needed:** the chat's Google connection can read sources during a conversation. A standalone daily program cannot reuse that chat connection. It can try the supplier sheet's existing public export without credentials; if that is private, authorize read-only access or supply a fresh exported snapshot. Do not make private files public just to avoid authorization. Reading private Google files automatically needs supported read-only Google authorization; editing the original document remains a separate, later action.

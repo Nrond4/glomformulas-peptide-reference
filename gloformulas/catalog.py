@@ -12,6 +12,7 @@ def validate(payload):
         if not all(p.get(x) for x in ('key','name','url')): raise ValueError('Catalog products require key, name, url')
         if p['key'] in seen: raise ValueError('Duplicate catalog key')
         seen.add(p['key'])
+        if 'coa_links' in p and (not isinstance(p['coa_links'],list) or any(not isinstance(v,str) or not v.startswith('https://') for v in p['coa_links'])):raise ValueError('COA candidate links must be HTTPS URLs')
         if not isinstance(p.get('sizes'),list) or any(not isinstance(v,str) for v in p['sizes']): raise ValueError('sizes must be a list (possibly empty)')
     return {p['key']:p for p in items}
 
@@ -24,8 +25,9 @@ def compare(before, after):
         elif k not in new: changes.append((k,'discontinued_candidate',old[k],None))
         else:
             if sorted(old[k]['sizes'])!=sorted(new[k]['sizes']): changes.append((k,'size_change',old[k],new[k]))
-            a={x:y for x,y in old[k].items() if x!='sizes'}
-            b={x:y for x,y in new[k].items() if x!='sizes'}
+            if old[k].get('coa_links',[])!=new[k].get('coa_links',[]):changes.append((k,'coa_link_change',old[k],new[k]))
+            a={x:y for x,y in old[k].items() if x not in ('sizes','coa_links')}
+            b={x:y for x,y in new[k].items() if x not in ('sizes','coa_links')}
             if a!=b: changes.append((k,'listing_update',old[k],new[k]))
     return changes
 
@@ -46,5 +48,8 @@ def import_catalog(db,payload,url='https://gloformulas.com'):
         cid=key(snapshot_id,k,kind)
         db.execute('INSERT INTO catalog_changes VALUES(?,?,?,?,?,?)',(cid,snapshot_id,k,kind,encoded(before),encoded(after)))
         if kind=='discontinued_candidate': flag(db,'catalog_change',cid,kind,'Absent from complete snapshot; confirm discontinuation manually.')
+    for product in payload['products']:
+        for link in product.get('coa_links',[]):
+            flag(db,'catalog_coa_candidate',key(product['key'],link),'unverified_catalog_coa_link','A listing links a possible report; identity, laboratory, vendor and batch association remain unverified.')
     audit(db,'catalog_comparison',snapshot_id,{'baseline':previous is None,'changes':len(changes)})
     return changes

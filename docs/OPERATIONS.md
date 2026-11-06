@@ -1,5 +1,7 @@
 # Running and maintaining the reference system
 
+For the new 8:00 AM Mountain GitHub Actions option, follow [Activate daily GitHub monitoring](GITHUB_ACTIONS.md). The systemd instructions below describe the earlier local-host alternative; do not activate both schedulers against the same baseline.
+
 ## Plain-English operating status
 
 The code is prepared to check sources. That does not mean a computer is currently running it every day. Check these separately: can it reach each source, can it read private files if needed, does it retain its database, and is its daily schedule actually active?

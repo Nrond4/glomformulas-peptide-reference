@@ -1,0 +1,126 @@
+name: GloFormulas Daily Monitor
+run-name: GloFormulas daily monitoring (${{ github.event_name }})
+
+on:
+  schedule:
+    - cron: '0 8 * * *'
+      timezone: America/Boise
+  workflow_dispatch:
+    inputs:
+      initialize_from_seed:
+        description: 'First run only: initialize from the encrypted monitor-seed release'
+        required: false
+        default: false
+        type: boolean
+
+# No repository writes, Google credentials, personal access tokens or publishing permissions.
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: gloformulas-daily-database
+  cancel-in-progress: false
+
+jobs:
+  monitor:
+    # Secrets are never used for pull requests, forks, or a manually selected feature branch.
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'workflow_dispatch' || vars.GLO_MONITOR_ENABLED == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Prepare private workspace and dated summary
+        id: paths
+        shell: bash
+        run: |
+          umask 077
+          echo "GLO_STATE_DIR=$RUNNER_TEMP/glo-state" >> "$GITHUB_ENV"
+          echo "GLO_OUT_DIR=$RUNNER_TEMP/glo-output" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/glo-output"
+          python - <<'PY'
+          import os
+          from datetime import datetime
+          from pathlib import Path
+          from zoneinfo import ZoneInfo
+          stamp=datetime.now(ZoneInfo('America/Boise')).strftime('%Y-%m-%d_%H%M%S_%Z')
+          with open(os.environ['GITHUB_OUTPUT'],'a') as f:
+              f.write(f"stamp={stamp}-{os.environ['GITHUB_RUN_ID']}-{os.environ['GITHUB_RUN_ATTEMPT']}\n")
+          Path(os.environ['RUNNER_TEMP']+'/glo-output/summary.md').write_text(
+              '# GloFormulas monitoring — '+stamp+'\nChecks have not completed. If setup fails, inspect the failed step and docs/GITHUB_ACTIONS.md.\nOriginal Google Doc: not modified.\n')
+          PY
+      - name: Install monitor and public lookup dependencies
+        id: dependencies
+        run: python -m pip install '.[monitor,lab,browser]'
+      - name: Install browser for the public Freedom lookup
+        id: browser
+        run: python -m playwright install --with-deps chromium
+      - name: Restore the existing encrypted database
+        id: restore
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GLO_STATE_KEY: ${{ secrets.GLO_STATE_KEY }}
+          GLO_SOURCE_CONFIG_JSON: ${{ secrets.GLO_SOURCE_CONFIG_JSON }}
+          GLO_SEED_TAG: ${{ vars.GLO_SEED_TAG }}
+          INITIALIZE_FROM_SEED: ${{ inputs.initialize_from_seed || false }}
+        shell: bash
+        run: |
+          args=()
+          if [[ "$INITIALIZE_FROM_SEED" == 'true' ]]; then args+=(--bootstrap); fi
+          python -m gloformulas.actions_monitor restore --state "$GLO_STATE_DIR" "${args[@]}"
+      - name: Run read-only source checks
+        id: checks
+        timeout-minutes: 15
+        continue-on-error: true
+        env:
+          GLO_SOURCE_CONFIG: ${{ runner.temp }}/glo-state/source-config.json
+        run: python -m gloformulas.actions_monitor run --state "$GLO_STATE_DIR" --out "$GLO_OUT_DIR"
+      - name: Encrypt updated state and detailed report
+        id: seal
+        if: always() && steps.restore.outcome == 'success'
+        env:
+          GLO_STATE_KEY: ${{ secrets.GLO_STATE_KEY }}
+        run: python -m gloformulas.actions_monitor finalize --state "$GLO_STATE_DIR" --out "$GLO_OUT_DIR"
+      - name: Record setup errors without exposing private details
+        if: always() && steps.paths.outcome == 'success' && steps.restore.outcome != 'success'
+        env:
+          FAILED_STAGE: ${{ steps.dependencies.outcome != 'success' && 'dependency_installation' || steps.browser.outcome != 'success' && 'browser_installation' || 'baseline_restore' }}
+        run: python -m gloformulas.actions_monitor setup-summary --out "$GLO_OUT_DIR" --stage "$FAILED_STAGE"
+      - name: Preserve encrypted database for the next run
+        id: state_upload
+        if: always() && steps.seal.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: glo-monitor-state
+          path: ${{ runner.temp }}/glo-output/state.enc
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0
+      - name: Include state persistence errors in the summary
+        if: always() && steps.restore.outcome == 'success' && (steps.seal.outcome != 'success' || steps.state_upload.outcome != 'success')
+        run: python -m gloformulas.actions_monitor storage-error --out "$GLO_OUT_DIR"
+      - name: Save dated change report (public summary and encrypted details)
+        if: always() && steps.paths.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: glo-monitor-report-${{ steps.paths.outputs.stamp }}
+          path: |
+            ${{ runner.temp }}/glo-output/summary.md
+            ${{ runner.temp }}/glo-output/detail.enc
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+      - name: Show safe summary
+        if: always() && steps.paths.outcome == 'success'
+        shell: bash
+        run: cat "$GLO_OUT_DIR/summary.md" >> "$GITHUB_STEP_SUMMARY"
+      - name: Flag incomplete source checks
+        if: always() && steps.checks.outcome != 'success'
+        run: |
+          echo 'Monitoring was incomplete. See the dated report and failed source/setup steps. No Google Doc was modified.'
+          exit 1
