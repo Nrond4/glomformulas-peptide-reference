@@ -1,0 +1,10 @@
+[Unit]
+Description=GloFormulas private recurring reference checks
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/gloformulas-reference
+EnvironmentFile=/etc/gloformulas/runtime.env
+ExecStart=/opt/gloformulas-reference/ops/recurring.sh
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true

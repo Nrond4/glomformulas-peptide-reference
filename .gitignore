@@ -1,0 +1,12 @@
+work/
+*.sqlite*
+*.db
+__pycache__/
+*.egg-info/
+.venv/
+.env
+credentials*.json
+token*.json
+service-account*.json
+build/
+dist/
