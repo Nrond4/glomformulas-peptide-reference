@@ -72,7 +72,7 @@ No additional token, Google credential, paid account or third-party hosting setu
 
 The workflow never invokes the Doc publisher. It forces Google API sync off and receives no Google credentials. No unverified COA or medical claim is approved by a scheduled run.
 
-The visible run summary and `summary.md` contain safe counts/statuses only. Detailed findings, before/after records and source errors are in `detail.enc`. The database carried forward to the next run is in a separate `glo-monitor-state` artifact containing only `state.enc`. Raw logs, source files, PDFs and databases are never uploaded in plaintext or committed.
+The visible run summary and `summary.md` contain safe counts/statuses and fixed diagnostic categories only. The same sanitized summary appears in the **Show safe summary** job-log step, so Codex can inspect a run link without requesting private downloads or keys. Raw errors, URLs and report text remain encrypted. Detailed findings, before/after records and source errors are in `detail.enc`. The database carried forward to the next run is in a separate `glo-monitor-state` artifact containing only `state.enc`. Raw logs, source files, PDFs and databases are never uploaded in plaintext or committed.
 
 Detailed reports are retained for 14 days and state artifacts for up to 90 days, subject to the repository's retention limits. Runs do not delete previous artifacts or commit generated files. Download an encrypted state backup periodically. If state expires after a long interruption, the workflow stops for recovery rather than silently resetting history. Current local baseline size is small; larger histories can consume GitHub's included artifact storage. A configured size limit stops oversized exports instead of introducing another storage service or automatic paid upgrade.
 
@@ -102,3 +102,5 @@ The optional `GLO_SOURCE_CONFIG_JSON` repository **secret** can override approve
 - [GitHub schedule syntax, timezone and daylight-saving support](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#onschedule)
 - [Artifact access and retention](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/download-workflow-artifacts)
 - [GitHub artifact API](https://docs.github.com/en/rest/actions/artifacts)
+
+If a repeat run fails before source checks, inspect its fixed `Setup diagnostic` category in the restore-step log. The artifact ZIP API uses GitHub JSON negotiation; release-asset downloads use octet-stream. Neither path forwards the job token to signed storage URLs. Do not reinitialize or change keys merely because a download failed.

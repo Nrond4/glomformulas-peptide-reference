@@ -23,7 +23,10 @@ class GitHubStore:
         self.opener=urllib.request.build_opener(NoRedirect())
     def request(self,path,binary=False):
         if not path.startswith(f'/repos/{self.repo}/'):raise StateError('GitHub request left the current repository')
-        req=urllib.request.Request('https://api.github.com'+path,headers={'Authorization':'Bearer '+self.token,'Accept':'application/octet-stream' if binary else 'application/vnd.github+json','X-GitHub-Api-Version':'2022-11-28','User-Agent':'GloFormulasDailyMonitor'})
+        # Artifact ZIP requests use GitHub's JSON API media type and return a redirect.
+        # Only the release-asset API requires octet-stream to select binary contents.
+        media='application/octet-stream' if binary and '/releases/assets/' in path else 'application/vnd.github+json'
+        req=urllib.request.Request('https://api.github.com'+path,headers={'Authorization':'Bearer '+self.token,'Accept':media,'X-GitHub-Api-Version':'2022-11-28','User-Agent':'GloFormulasDailyMonitor'})
         try:
             with self.opener.open(req,timeout=40) as response:body=response.read(MAX_ARCHIVE+1)
         except urllib.error.HTTPError as exc:

@@ -5,6 +5,7 @@ import getpass
 import io
 import json
 import os
+import re
 import sys
 import zipfile
 from datetime import datetime
@@ -27,6 +28,102 @@ REASONS={
 }
 
 
+DIAGNOSTICS={
+    'http_401':'Source requires authorization.',
+    'http_403':'Source denied the automated request.',
+    'http_404':'Source endpoint was not found.',
+    'http_429':'Source rate limit was reached.',
+    'http_500':'Source returned a server error.',
+    'http_502':'Source returned a gateway error.',
+    'http_503':'Source is temporarily unavailable.',
+    'http_504':'Source gateway timed out.',
+    'connection_unavailable':'Network/TLS connection could not be established.',
+    'lookup_timeout':'Freedom lookup did not produce the expected page element or PDF in time.',
+    'source_timeout':'Source request timed out.',
+    'catalog_xml_unreadable':'Catalog sitemap was not readable XML.',
+    'source_json_unreadable':'Source response was not readable JSON.',
+    'robots_excluded':'Source robots rules exclude the requested catalog path.',
+    'catalog_schema_unrecognized':'Readable product data or expected catalog schema was missing.',
+    'catalog_incomplete':'Catalog totals, scope or pagination could not be verified.',
+    'supplier_private_or_non_csv':'Supplier export requires access or did not return readable CSV.',
+    'supplier_header_missing':'Supplier spreadsheet layout was not recognized.',
+    'freedom_results_unreadable':'Lookup returned no readable official PDF links.',
+    'snapshot_missing':'A required saved source snapshot is missing.',
+    'optional_dependency_missing':'An optional source-reading dependency is unavailable.',
+    'source_not_configured':'This source has not been selected/configured for unattended checks.',
+    'unclassified_source_error':'Source check did not complete; raw details remain encrypted.',
+}
+
+
+def public_diagnostics(component,detail,status):
+    """Map private error text to fixed public categories; never echo text or source URLs."""
+    if not isinstance(detail,dict):return []
+    reasons=[]
+    if isinstance(detail.get('reason'),str):reasons.append(detail['reason'][:1000])
+    failures=detail.get('failures',[])
+    if isinstance(failures,list):
+        reasons += [f['reason'][:1000] for f in failures[:20] if isinstance(f,dict) and isinstance(f.get('reason'),str)]
+    codes=set()
+    for reason in reasons:
+        for code in re.findall(r'\bHTTP[ :]+(401|403|404|429|500|502|503|504)\b',reason,re.I):codes.add('http_'+code)
+        if 'connection unavailable' in reason.lower():codes.add('connection_unavailable')
+        if 'TimeoutError' in reason or 'timed out' in reason.lower():codes.add('lookup_timeout' if component=='freedom' else 'source_timeout')
+        if reason=='ParseError':codes.add('catalog_xml_unreadable' if component=='catalog' else 'unclassified_source_error')
+        if reason=='JSONDecodeError':codes.add('source_json_unreadable')
+        if 'disallowed by robots.txt' in reason:codes.add('robots_excluded')
+        if any(t in reason for t in ('structured data','structured product data','Unrecognized WooCommerce','Unrecognized Shopify','Unrecognized sitemap')):codes.add('catalog_schema_unrecognized')
+        if any(t in reason for t in ('pagination','page limit','scope changed','total missing','scan incomplete','page budget')):codes.add('catalog_incomplete')
+        if 'not public CSV' in reason:codes.add('supplier_private_or_non_csv')
+        if 'Supplier header missing' in reason:codes.add('supplier_header_missing')
+        if 'No readable lab PDF results' in reason:codes.add('freedom_results_unreadable')
+        if 'Required private source snapshot is missing' in reason:codes.add('snapshot_missing')
+        if 'No module named' in reason:codes.add('optional_dependency_missing')
+    if status=='not_configured':codes.add('source_not_configured')
+    if status in ('blocked','failed','partial') and not codes:codes.add('unclassified_source_error')
+    return sorted(codes)[:8]
+
+
+SETUP_DIAGNOSTICS={
+    'artifact_api_rejected':'GitHub rejected the encrypted-state request; inspect Actions read permission or API media-type compatibility.',
+    'artifact_api_unavailable':'GitHub state storage could not be reached; the saved baseline was not reset.',
+    'state_missing':'No prior encrypted database was found; explicit first-run initialization is required.',
+    'artifact_expired':'Saved state has expired; recover the existing encrypted backup.',
+    'artifact_redirect_rejected':'Encrypted-state storage redirected to an unapproved host.',
+    'artifact_download_failed':'The encrypted artifact could not be downloaded.',
+    'artifact_format_invalid':'Downloaded state did not have the expected archive format.',
+    'state_authentication_failed':'State could not be authenticated with the configured key; no empty replacement was created.',
+    'state_envelope_invalid':'State is corrupt, oversized, or not the expected encrypted file.',
+    'key_missing_or_invalid':'Repository encryption secret is missing or does not meet the required format.',
+    'state_restore_failed':'Database restore stopped safely; no empty replacement was created.',
+}
+
+for _code in ('401','403','404','410','415','429','500','502','503','504'):
+    SETUP_DIAGNOSTICS['artifact_http_'+_code]='GitHub encrypted-state API returned HTTP '+_code+'. The stored baseline was not reset.'
+
+
+def public_setup_diagnostic(exc):
+    """Only fixed categories escape to public logs; raw exception strings never do."""
+    text=str(exc)
+    status=re.search(r'GitHub state request failed \(HTTP (401|403|404|410|415|429|500|502|503|504)\)',text)
+    if status:return 'artifact_http_'+status[1]
+    if 'GitHub state request failed (HTTP ' in text:return 'artifact_api_rejected'
+    known={
+        'GitHub state storage unavailable; baseline was not reset':'artifact_api_unavailable',
+        'Unexpected GitHub storage redirect':'artifact_redirect_rejected',
+        'GitHub encrypted artifact download failed':'artifact_download_failed',
+        'Unexpected state artifact contents':'artifact_format_invalid',
+        'Corrupted GitHub state artifact':'artifact_format_invalid',
+        'Encryption key mismatch or corrupted file; no state was replaced':'state_authentication_failed',
+        'Invalid encrypted file; no state was replaced':'state_envelope_invalid',
+        'Repository secret GLO_STATE_KEY is missing':'key_missing_or_invalid',
+        'GLO_STATE_KEY must be a random secret of at least 32 characters':'key_missing_or_invalid',
+    }
+    if text in known:return known[text]
+    if text.startswith('No existing database artifact.'):return 'state_missing'
+    if text.startswith('The last database artifact expired;'):return 'artifact_expired'
+    return 'state_restore_failed'
+
+
 def stamp(moment=None):
     return (moment or datetime.now(ZONE)).astimezone(ZONE).strftime('%Y-%m-%d_%H%M%S_%Z')
 
@@ -47,7 +144,13 @@ def public_summary(result):
         if name not in COMPONENTS:continue
         state=state if state in STATUSES else 'failed'
         lines.append(f'- {name}: **{state}**. {REASONS.get(state,"See encrypted details.")}')
-    if not result.get('checks'):lines.append('- Checks did not complete. Check the failed setup/run step and the activation instructions.')
+        for code in public_diagnostics(name,check.get('detail',{}),state):
+            lines.append(f'  - Diagnostic: {code}. {DIAGNOSTICS[code]}')
+    if not result.get('checks'):
+        lines.append('- Checks did not complete. Check the failed setup/run step and the activation instructions.')
+        types={'ValueError':'invalid_monitor_input','TypeError':'monitor_type_error','OperationalError':'database_operation_failed','FileNotFoundError':'required_file_missing'}
+        code=types.get(result.get('error_type'))
+        if code:lines.append(f'- Monitor diagnostic: {code}. Details remain encrypted.')
     setup=result.get('setup_issue')
     if setup in ('dependency_installation','browser_installation','baseline_restore'):
         lines.append(f'- Setup error: {setup}. Check the activation guide and this failed step; source checks were not run.')
@@ -176,7 +279,10 @@ def main():
                     dest=Path(args.output)/name;dest.parent.mkdir(parents=True,exist_ok=True);dest.write_bytes(archive.read(name))
             print('Detailed report decrypted locally. Keep these files private.')
         return 0
-    except Exception:
+    except Exception as exc:
+        if args.command=='restore':
+            code=public_setup_diagnostic(exc)
+            print(f'Setup diagnostic: {code}. {SETUP_DIAGNOSTICS[code]}',file=sys.stderr)
         # No raw API errors, private URLs, source settings, signed URLs or secrets in public logs.
         print('Monitoring setup/state operation failed. Check the activation guide, key, seed, artifact retention and failed step. The database was not replaced with an empty baseline.',file=sys.stderr)
         return 1

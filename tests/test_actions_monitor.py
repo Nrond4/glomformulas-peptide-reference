@@ -45,6 +45,44 @@ class ActionsTests(unittest.TestCase):
     def test_setup_summary_lists_sources_not_checked(self):
         summary=public_summary({'status':'setup_required','setup_issue':'baseline_restore','checks':[{'component':'catalog','status':'not_attempted'}]})
         self.assertIn('Setup error: baseline_restore',summary);self.assertIn('catalog: **not_attempted**',summary)
+    def test_safe_diagnostics_identify_failures_without_echoing_private_text(self):
+        result={'status':'partial','checks':[
+            {'component':'catalog','status':'blocked','detail':{'reason':'Source returned HTTP 403: https://private.example/SECRET'}},
+            {'component':'freedom','status':'blocked','detail':{'failures':[{'url':'https://private.example/SECRET','reason':'TimeoutError'}]}},
+            {'component':'supplier','status':'failed','detail':{'reason':'Supplier export is not public CSV; private SECRET'}},
+            {'component':'literature','status':'not_configured','detail':{'reason':'PRIVATE SELECTION'}}]}
+        summary=public_summary(result)
+        for code in ('http_403','lookup_timeout','supplier_private_or_non_csv','source_not_configured'):self.assertIn(code,summary)
+        for private in ('SECRET','private.example','PRIVATE SELECTION'):self.assertNotIn(private,summary)
+    def test_unknown_private_failure_stays_generic(self):
+        summary=public_summary({'status':'partial','checks':[{'component':'catalog','status':'failed','detail':{'reason':'PRIVATE_FAILURE_DETAILS'}}]})
+        self.assertIn('unclassified_source_error',summary);self.assertNotIn('PRIVATE_FAILURE_DETAILS',summary)
+    def test_xml_and_pagination_categories(self):
+        from gloformulas.actions_monitor import public_diagnostics
+        self.assertEqual(public_diagnostics('catalog',{'reason':'ParseError'},'failed'),['catalog_xml_unreadable'])
+        self.assertIn('catalog_incomplete',public_diagnostics('catalog',{'reason':'Catalog pagination did not terminate'},'failed'))
+    def test_global_failure_type_is_allowlisted(self):
+        self.assertIn('database_operation_failed',public_summary({'status':'failed','error_type':'OperationalError','checks':[]}))
+        self.assertNotIn('PRIVATE_SECRET',public_summary({'status':'failed','error_type':'PRIVATE_SECRET','checks':[]}))
+    def test_workflow_prints_only_sanitized_summary_not_raw_report(self):
+        text=Path('.github/workflows/daily-monitor.yml').read_text()
+        self.assertIn('cat "$GLO_OUT_DIR/summary.md" | tee -a "$GITHUB_STEP_SUMMARY"',text)
+        self.assertNotIn('cat "$GLO_OUT_DIR/monitor-result.json"',text)
+        self.assertNotIn('cat "$GLO_OUT_DIR/private-run.log"',text)
+    def test_artifact_and_release_downloads_use_their_own_media_types(self):
+        from gloformulas.actions_store import GitHubStore
+        import urllib.error
+        store=GitHubStore('owner/repo','synthetic-token')
+        target='https://results.blob.core.windows.net/signed'
+        for path,media in [('/repos/owner/repo/actions/artifacts/123/zip','application/vnd.github+json'),('/repos/owner/repo/releases/assets/456','application/octet-stream')]:
+            with patch.object(store.opener,'open',side_effect=urllib.error.HTTPError('https://api.github.com',302,'Redirect',{'Location':target},None)) as opened,patch.object(store,'download_redirect',return_value=b'encrypted'):
+                self.assertEqual(store.request(path,binary=True),b'encrypted')
+                self.assertEqual(opened.call_args.args[0].headers['Accept'],media)
+    def test_restore_diagnostic_never_echoes_private_error_text(self):
+        from gloformulas.actions_monitor import public_setup_diagnostic
+        self.assertEqual(public_setup_diagnostic(StateError('GitHub state request failed (HTTP 415); baseline was not reset')),'artifact_http_415')
+        self.assertEqual(public_setup_diagnostic(StateError('Encryption key mismatch or corrupted file; no state was replaced')),'state_authentication_failed')
+        self.assertEqual(public_setup_diagnostic(ValueError('PRIVATE_TOKEN https://private.example')),'state_restore_failed')
     def test_mountain_schedule_winter_summer_and_dst_dates(self):
         zone=ZoneInfo('America/Boise')
         for day,hour in [('2026-01-15',15),('2026-07-15',14),('2026-03-08',14),('2026-11-01',15)]:
