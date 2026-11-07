@@ -27,3 +27,5 @@ CREATE INDEX IF NOT EXISTS evidence_product ON evidence(product_id,category,revi
 CREATE INDEX IF NOT EXISTS lab_code ON lab_results(lab,search_code);
 INSERT OR IGNORE INTO schema_version VALUES(2,strftime('%Y-%m-%dT%H:%M:%SZ','now'));
 CREATE TABLE IF NOT EXISTS report_artifacts(sha256 TEXT PRIMARY KEY,content BLOB NOT NULL,mime_type TEXT NOT NULL,url TEXT NOT NULL,retrieved_at TEXT NOT NULL,byte_count INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS source_backoff(component TEXT PRIMARY KEY,retry_at TEXT NOT NULL,reason TEXT NOT NULL);
+INSERT OR IGNORE INTO schema_version VALUES(3,strftime('%Y-%m-%dT%H:%M:%SZ','now'));

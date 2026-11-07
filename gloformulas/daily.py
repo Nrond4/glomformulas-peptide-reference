@@ -2,6 +2,7 @@
 import json
 import os
 import subprocess
+from datetime import datetime,timedelta,timezone
 from pathlib import Path
 from .core import encoded,key,now,audit
 from .config import config
@@ -41,11 +42,19 @@ def daily(db,state_dir='work',live=False,services=None):
     checks=[]
     def stage(name,operation,success='checked'):
         try:
-            with db:detail=operation()
+            cooldown=db.execute('SELECT retry_at FROM source_backoff WHERE component=?',(name,)).fetchone() if live else None
+            if cooldown and datetime.fromisoformat(cooldown['retry_at'])>datetime.now(timezone.utc):
+                detail={'status':'deferred','reason':'Source returned HTTP 429 previously; cooldown is still active','retry_at':cooldown['retry_at']}
+            else:
+                with db:detail=operation()
             detail={} if detail is None else detail
             outcome=detail.get('status',success) if isinstance(detail,dict) else success
         except (FetchError,FileNotFoundError,ImportError) as exc:
             outcome='blocked';detail={'reason':str(exc) if isinstance(exc,(FetchError,ImportError)) else 'Required private source snapshot is missing'}
+            if isinstance(exc,FetchError) and exc.status==429:
+                retry=(datetime.now(timezone.utc)+timedelta(seconds=exc.retry_after_seconds or 3600)).isoformat()
+                detail['retry_at']=retry
+                with db:db.execute('INSERT INTO source_backoff VALUES(?,?,?) ON CONFLICT(component) DO UPDATE SET retry_at=excluded.retry_at,reason=excluded.reason',(name,retry,'HTTP 429'))
         except Exception as exc:
             outcome='failed';detail={'reason':str(exc) if isinstance(exc,ValueError) else type(exc).__name__}
         check={'component':name,'status':outcome,'detail':detail,'checked_at':now()}
@@ -100,7 +109,7 @@ def daily(db,state_dir='work',live=False,services=None):
     with db:initialize_coverage(db)
     after={t:db.execute(f'SELECT count(*) FROM {t}').fetchone()[0] for t in before}
     delta={t:after[t]-before[t] for t in before}
-    failures=[c for c in checks if c['status'] in ('failed','blocked','partial','not_configured')]
+    failures=[c for c in checks if c['status'] in ('failed','blocked','partial','not_configured','deferred')]
     change_details={}
     for table in ('catalog_changes','supplier_changes'):
         records=[dict(row) for row in db.execute(f'SELECT * FROM {table} WHERE rowid>? ORDER BY rowid LIMIT 50',(starting_rows[table],))]

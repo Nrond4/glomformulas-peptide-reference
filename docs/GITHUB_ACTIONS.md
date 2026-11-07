@@ -104,3 +104,15 @@ The optional `GLO_SOURCE_CONFIG_JSON` repository **secret** can override approve
 - [GitHub artifact API](https://docs.github.com/en/rest/actions/artifacts)
 
 If a repeat run fails before source checks, inspect its fixed `Setup diagnostic` category in the restore-step log. The artifact ZIP API uses GitHub JSON negotiation; release-asset downloads use octet-stream. Neither path forwards the job token to signed storage URLs. Do not reinitialize or change keys merely because a download failed.
+
+## Source connection diagnostics after a successful restore
+
+A successful encrypted restore means database transfer/persistence is working; it does not mean every source permits automated reads. The first successful repeat restore reported a rate-limited catalog, a blocked supplier download, a Freedom lookup timeout, and no literature selection. Saved guide/folder copies were explicitly marked as replayed.
+
+The supplier reader now permits Google's `googleusercontent.com` file-serving subdomains for CSV redirects only, without broadening the catalog/lab clients or sending credentials. A sign-in redirect stops with a fixed authorization-needed message. This fixes a rejected-redirect case but does not make a private spreadsheet public or configure Google authorization.
+
+Freedom recognizes official **Open PDF** links even when their URLs have no `.pdf` suffix. Reports must still download from official lab hosts, contain PDF bytes, have a printed GLO-prefixed code, and pass the existing checks. Page-load, search-control, and result-wait timeouts have separate safe diagnostic categories. A timeout/no readable result is never proof that no COA exists.
+
+Catalog HTTP 429 responses retain the declared retry delay, including HTTP-date headers. The encrypted database carries the resulting cooldown to the next manual/scheduled job. A job during that cooldown marks the source **deferred**, preserves the prior baseline, and continues other checks. When no retry delay is supplied, the fallback cooldown is one hour. It does not bypass a block or turn an unavailable scan into a green/no-change result. A later permitted request must still establish catalog completeness.
+
+These fixes are tested locally; the next GitHub-hosted run is still required to validate live compatibility. Known GLO codes and research selections can be added later through private settings; no verified codes were found in the preserved guide to invent a default. Original Google Doc publishing remains disabled.
