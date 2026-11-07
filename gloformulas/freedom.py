@@ -21,9 +21,10 @@ def glo_code(value):
 
 def report_links(content,base=LOOKUP):
     links=[]
-    for href in Page(content).links:
+    for href,label in Page(content).anchors:
         target=urljoin(base,href);p=urlparse(target)
-        if p.scheme=='https' and p.hostname in HOSTS and (p.path.lower().endswith('.pdf') or 'application/pdf' in href):
+        labeled_pdf=bool(re.search(r'open\s*pdf|view\s*coa|download\s*coa',label,re.I))
+        if p.scheme=='https' and p.hostname in HOSTS and not p.username and not p.password and (p.path.lower().endswith('.pdf') or labeled_pdf):
             links.append(target)
     return sorted(set(links))
 
@@ -114,25 +115,42 @@ class FreedomClient:
         return {'records':records,'failures':failures,'status':'completed' if records and not failures else ('partial' if records else 'blocked'),'scope':'GLO-only','vendor_batch_linkage':'exact reviewed expectation required'}
 
 
+def lookup_page(page,*,code=None,company='GloFormulas',timeout=20000):
+    """Use the observed public controls; distinguish navigation, form and result failures."""
+    stage='navigation'
+    try:
+        response=page.goto(LOOKUP,wait_until='domcontentloaded',timeout=30000)
+        status=getattr(response,'status',200) if response is not None else 200
+        if status in (401,403,429,500,502,503,504):raise FetchError(f'Source returned HTTP {status}',status)
+        stage='controls'
+        if code:
+            page.get_by_role('button',name='Search Code / Accession #',exact=True).click(timeout=10000)
+            page.locator('input:visible:not([type=hidden])').first.fill(glo_code(code),timeout=10000)
+            page.get_by_role('button',name='Look up',exact=True).click(timeout=10000)
+        else:
+            page.get_by_role('button',name='Company Name',exact=True).click(timeout=10000)
+            page.get_by_placeholder('Enter company name here',exact=True).fill(company,timeout=10000)
+            page.get_by_role('button',name='Search',exact=True).click(timeout=10000)
+        stage='results'
+        # Official results can say Open PDF while using a URL without a .pdf suffix.
+        page.wait_for_function(r"""() => Array.from(document.querySelectorAll('a[href]')).some(a =>
+            a.getClientRects().length && (new URL(a.href,location.href).pathname.toLowerCase().endsWith('.pdf') || /open\s*pdf|view\s*coa|download\s*coa/i.test(a.textContent)))""",timeout=timeout)
+        content=page.content()
+        if not report_links(content):raise FetchError('Freedom lookup results contain no readable official PDF links; not proof of missing COAs')
+        return content
+    except FetchError:raise
+    except Exception as exc:
+        if type(exc).__name__=='TimeoutError':
+            raise FetchError('Freedom lookup '+stage+' timed out; not proof of missing COAs') from None
+        raise FetchError('Freedom lookup '+stage+' could not be read; raw page content was not published') from None
+
+
 def browser_lookup(*,code=None,company='GloFormulas'):
-    """Optional rendered public lookup; no hidden endpoints, logins or CAPTCHA bypass.
-    Real page compatibility still requires a live smoke check on the deployment host.
-    """
+    """Read-only rendered lookup; no hidden endpoints, sign-ins or challenge bypass."""
     import os
     from playwright.sync_api import sync_playwright
     with sync_playwright() as p:
         proxy=os.environ.get('HTTPS_PROXY') or os.environ.get('HTTP_PROXY')
         browser=p.chromium.launch(headless=True,proxy={'server':proxy} if proxy else None)
-        try:
-            page=browser.new_page();page.goto(LOOKUP,wait_until='domcontentloaded',timeout=30000)
-            if code:
-                page.get_by_role('button',name='Search Code / Accession #',exact=True).click()
-                page.locator('input:visible:not([type=hidden])').first.fill(glo_code(code))
-                page.get_by_role('button',name='Look up',exact=True).click()
-            else:
-                page.get_by_role('button',name='Company Name',exact=True).click()
-                page.get_by_placeholder('Enter company name here',exact=True).fill(company)
-                page.get_by_role('button',name='Search',exact=True).click()
-            page.locator('a[href*=".pdf"]').first.wait_for(state='attached',timeout=20000)
-            return page.content()
+        try:return lookup_page(browser.new_page(),code=code,company=company)
         finally:browser.close()
