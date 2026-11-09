@@ -30,6 +30,11 @@ REASONS={
 
 
 DIAGNOSTICS={
+    'report_download_not_pdf':'Official report URL did not return PDF bytes; report remains unverified.',
+    'printed_code_not_glo':'Printed code is not GLO-prefixed; the report was not accepted as a GloFormulas report.',
+    'printed_code_unreadable':'The PDF was retained for review; its printed search code could not be read.',
+    'printed_code_mismatch':'Printed report code differs from the requested code; report was not accepted.',
+    'pdf_extraction_review_required':'The official-host PDF was retained privately; extraction needs review.',
     'source_sign_in_required':'Source requires sign-in; no unattended read authorization is configured.',
     'source_redirect_rejected':'Source redirected outside its approved file-serving hosts.',
     'lookup_navigation_timeout':'Freedom lookup page did not finish loading in time.',
@@ -72,6 +77,11 @@ def public_diagnostics(component,detail,status):
     codes=set()
     for reason in reasons:
         for code in re.findall(r'\bHTTP[ :]+(401|403|404|429|500|502|503|504)\b',reason,re.I):codes.add('http_'+code)
+        if 'did not return PDF bytes' in reason:codes.add('report_download_not_pdf')
+        if 'Printed report code is not GLO-prefixed' in reason:codes.add('printed_code_not_glo')
+        if 'Printed search code could not be read' in reason:codes.add('printed_code_unreadable')
+        if 'Returned report search code differs from request' in reason:codes.add('printed_code_mismatch')
+        if 'Lab PDF extraction failed;' in reason:codes.add('pdf_extraction_review_required')
         if 'Source requires sign-in;' in reason:codes.add('source_sign_in_required')
         if 'Refused URL outside the configured HTTPS source hosts' in reason:codes.add('source_redirect_rejected')
         for step in ('navigation','controls','results'):
@@ -154,6 +164,8 @@ def public_summary(result):
         if name not in COMPONENTS:continue
         state=state if state in STATUSES else 'failed'
         lines.append(f'- {name}: **{state}**. {REASONS.get(state,"See encrypted details.")}')
+        if name=='freedom' and check.get('detail',{}).get('coverage')=='tracked_codes':
+            lines.append('  - Coverage: configured report codes only; this does not establish complete discovery of new GLO reports.')
         for code in public_diagnostics(name,check.get('detail',{}),state):
             lines.append(f'  - Diagnostic: {code}. {DIAGNOSTICS[code]}')
     if not result.get('checks'):

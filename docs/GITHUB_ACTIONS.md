@@ -116,3 +116,13 @@ Freedom recognizes official **Open PDF** links even when their URLs have no `.pd
 Catalog HTTP 429 responses retain the declared retry delay, including HTTP-date headers. The encrypted database carries the resulting cooldown to the next manual/scheduled job. A job during that cooldown marks the source **deferred**, preserves the prior baseline, and continues other checks. When no retry delay is supplied, the fallback cooldown is one hour. It does not bypass a block or turn an unavailable scan into a green/no-change result. A later permitted request must still establish catalog completeness.
 
 These fixes are tested locally; the next GitHub-hosted run is still required to validate live compatibility. Known GLO codes and research selections can be added later through private settings; no verified codes were found in the preserved guide to invent a default. Original Google Doc publishing remains disabled.
+
+## Known Freedom report codes: direct PDF first
+
+For configured `FREEDOM_CODES`, the monitor now tries the observed official report route on `coas.freedomdiagnosticstesting.com` before using the interactive lookup. The downloaded file must contain PDF bytes, come from an approved official host, and have the same **printed** GLO search code as requested. It is not accepted simply because its filename begins with GLO. Only HTTP 404 permits fallback to the public lookup; rate limits and access denials do not trigger another route.
+
+This uses the existing `GLO_SOURCE_CONFIG_JSON` / `FREEDOM_CODES` setting. No additional secret, report URL setting, database initialization, or encryption-key change is required. Company-name discovery remains the path when no specific codes are configured. Known-code monitoring does not establish complete discovery of all new reports, and the public summary now states that coverage limit.
+
+If text extraction or the printed code cannot be verified, the original official-host PDF is retained only in the encrypted database and a review flag is added. A layout-preserving text fallback may fill unreadable fields but cannot select one of conflicting printed search codes. Missing data is not filled from a filename. Printed code mismatches/non-GLO reports are rejected as GloFormulas records. Laboratory-host retrieval remains separate from reviewed product/batch linkage and medical evidence.
+
+The direct path and extraction safeguards have synthetic PDF tests. The user-supplied live report could not be retrieved by this workspace's reader; its printed identity, date, batch, purity and content have not been verified here. Inspect the next GitHub-hosted run after merging rather than assuming that a successful unit test authenticates the real report.

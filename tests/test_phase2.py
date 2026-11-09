@@ -98,7 +98,7 @@ class Phase2Tests(unittest.TestCase):
         content='<a href="https://coas.freedomdiagnosticstesting.com/GLO123.pdf">PDF</a><a href="https://evil.example/GLO123.pdf">Other</a>'
         self.assertEqual(len(report_links(content)),1)
     def test_freedom_no_results_not_missing_coa(self):
-        with self.assertRaises(FetchError):FreedomClient(rendered=lambda **k:'<div>Loading</div>').search('GLO123')
+        with self.assertRaises(FetchError):FreedomClient(rendered=lambda **k:'<div>Loading</div>',prefer_direct=False).search('GLO123')
     def test_freedom_extraction_conflict_and_date(self):
         f=parse_text('Search Code: GLO123\nLot: B1\nPurity: 99.1%\nNet Content: 10.5mg\nReport Date: October 1, 2026\nIdentity: Example\nCompany: GloFormulas')
         self.assertEqual(f['report_date'],'2026-10-01');self.assertEqual(f['measured_content'],'10.5mg')
@@ -106,12 +106,12 @@ class Phase2Tests(unittest.TestCase):
     def test_freedom_wrong_code_never_records(self):
         target='https://coas.freedomdiagnosticstesting.com/report.pdf';h=FakeHTTP({target:Response(target,b'%PDFsynthetic',{})})
         with patch('gloformulas.freedom.extract_pdf',return_value=({'search_code':'OTHER123'},[{'page':1,'text':'x'}])):
-            r=FreedomClient(h,lambda **k:'<a href="'+target+'">PDF</a>').collect(self.db,['GLO123'])
+            r=FreedomClient(h,lambda **k:'<a href="'+target+'">PDF</a>',prefer_direct=False).collect(self.db,['GLO123'])
         self.assertEqual(r['records'],[]);self.assertEqual(r['status'],'blocked')
     def test_freedom_authenticity_separate_from_batch_and_idempotent(self):
         target='https://coas.freedomdiagnosticstesting.com/report.pdf';h=FakeHTTP({target:Response(target,b'%PDFsynthetic',{})})
         fields={'search_code':'GLO123','company':'GloFormulas','identity':'Example','batch':'B','purity':'99.1%','measured_content':'10mg','report_date':'2020-01-01'}
-        client=FreedomClient(h,lambda **k:'<a href="'+target+'">PDF</a>')
+        client=FreedomClient(h,lambda **k:'<a href="'+target+'">PDF</a>',prefer_direct=False)
         with patch('gloformulas.freedom.extract_pdf',return_value=(fields,[{'page':1,'text':'Synthetic fixture'}])):
             a=client.collect(self.db,['GLO123']);client.collect(self.db,['GLO123'])
         self.assertEqual(a['records'][0]['attribution'],'unverified');self.assertEqual(self.db.execute('SELECT count(*) FROM lab_fetches').fetchone()[0],1);self.assertEqual(self.db.execute('SELECT count(*) FROM report_artifacts').fetchone()[0],1)
@@ -132,7 +132,7 @@ class Phase2Tests(unittest.TestCase):
         target='https://coas.freedomdiagnosticstesting.com/report.pdf';h=FakeHTTP({target:Response(target,b'%PDFsynthetic',{})})
         fields={'search_code':'GLO123','company':'GloFormulas','identity':'Example','batch':'B','purity':'99.1%','measured_content':'10mg','report_date':'2020-01-01'}
         expected={'GLO123':{'product_id':self.pid,'identity':'Example','batch':'B'}}
-        client=FreedomClient(h,lambda **k:'<a href="'+target+'">PDF</a>')
+        client=FreedomClient(h,lambda **k:'<a href="'+target+'">PDF</a>',prefer_direct=False)
         with patch('gloformulas.freedom.extract_pdf',return_value=(fields,[{'page':1,'text':'Synthetic fixture'}])):
             result=client.collect(self.db,['GLO123'],expected)
         self.assertEqual(result['records'][0]['attribution'],'unverified')
