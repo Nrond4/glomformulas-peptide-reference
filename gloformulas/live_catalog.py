@@ -6,10 +6,11 @@ import urllib.parse as url
 import urllib.robotparser
 import xml.etree.ElementTree as ET
 from html.parser import HTMLParser
-from .http import Client, FetchError, AGENT
+from .http import FetchError, AGENT, retry_after_seconds
 import hashlib
 from .core import key, now
 from .catalog import validate
+from .catalog_http import CatalogClient, robots_interval
 
 BASE = 'https://gloformulas.com'
 HOSTS = {'gloformulas.com','www.gloformulas.com'}
@@ -79,19 +80,39 @@ def product_data(content,page_url):
 
 class CatalogCrawler:
     def __init__(self,client=None,base=BASE,max_pages=300):
-        self.client=client or Client(HOSTS);self.base=base.rstrip('/');self.max_pages=max_pages;self.observations=[];self.robot=None
-    def fetch(self,path):
+        self.client=client or CatalogClient(HOSTS);self.base=base.rstrip('/');self.max_pages=max_pages;self.observations=[];self.robot=None
+        self.stage='robots';self.requests=0;self.stopped=False
+        if isinstance(self.client,CatalogClient):self.client.guard=self.check_policy
+    def check_policy(self,target):
+        if self.stopped:raise FetchError('Catalog scan stopped after HTTP 429',429)
+        if self.robot is not None and not self.robot.can_fetch(AGENT,target):raise FetchError('Catalog path disallowed by robots.txt')
+    def diagnostics(self):
+        if isinstance(self.client,CatalogClient):return self.client.diagnostics()
+        return {'stage':self.stage,'request_count':self.requests}
+    def fetch(self,path,stage='product_page'):
         target=url.urljoin(self.base+'/',path)
         if url.urlparse(target).hostname not in HOSTS:raise ValueError('Catalog link left the source host')
-        if self.robot is not None and not self.robot.can_fetch(AGENT,target):raise FetchError('Catalog path disallowed by robots.txt')
-        r=self.client.get(target)
+        self.stage=stage
+        if isinstance(self.client,CatalogClient):self.client.stage=stage
+        self.check_policy(target)
+        self.requests+=1
+        try:
+            r=self.client.get(target)
+            if r.status==429:
+                raise FetchError('Source returned HTTP 429',429,retry_after_seconds(r.headers.get('retry-after') or r.headers.get('Retry-After'),round_up=True))
+        except FetchError as exc:
+            if exc.status==429:self.stopped=True
+            exc.catalog_diagnostics=self.diagnostics()
+            if isinstance(self.client,CatalogClient) and exc.status==429:
+                exc.retry_after_seconds=self.client.server_delay
+            raise
         self.observations.append({'url':r.url,'sha256':hashlib.sha256(r.body).hexdigest(),'status':r.status})
         return r
     def robots(self):
-        r=self.client.get(self.base+'/robots.txt')
+        r=self.fetch('/robots.txt','robots')
         robot=urllib.robotparser.RobotFileParser();robot.parse(r.text.splitlines());self.robot=robot
-        delay=robot.crawl_delay(AGENT) or robot.crawl_delay('*')
-        if delay is not None and hasattr(self.client,'interval'):self.client.interval=max(self.client.interval,delay)
+        interval=robots_interval(r.text,AGENT)
+        if hasattr(self.client,'interval'):self.client.interval=max(self.client.interval,interval)
         return [s.split(':',1)[1].strip() for s in r.text.splitlines() if s.lower().startswith('sitemap:')]
     def run(self,mode='auto'):
         try:sitemaps=self.robots()
@@ -100,7 +121,7 @@ class CatalogCrawler:
             sitemaps=[]
         if mode not in ('auto','woocommerce','shopify','sitemap'):raise ValueError('Unknown catalog adapter')
         if mode=='auto':
-            home=self.fetch('/').text
+            home=self.fetch('/','homepage').text
             if 'wp-content/' in home or 'woocommerce' in home.lower():mode='woocommerce'
             elif 'cdn.shopify.com' in home or 'Shopify.theme' in home:mode='shopify'
             else:mode='sitemap'
@@ -109,7 +130,7 @@ class CatalogCrawler:
         if mode=='woocommerce':
             total=None
             for page in range(1,self.max_pages+1):
-                r=self.fetch(f'/wp-json/wc/store/v1/products?per_page=100&page={page}')
+                r=self.fetch(f'/wp-json/wc/store/v1/products?per_page=100&page={page}','listing')
                 data=r.json()
                 if not isinstance(data,list):raise ValueError('Unrecognized WooCommerce catalog response')
                 if 'x-wp-total' not in r.headers:raise ValueError('Catalog total missing; cannot prove pagination complete')
@@ -127,7 +148,7 @@ class CatalogCrawler:
             scope='woocommerce-store-api'
         elif mode=='shopify':
             for page in range(1,self.max_pages+1):
-                data=self.fetch(f'/products.json?limit=250&page={page}').json()
+                data=self.fetch(f'/products.json?limit=250&page={page}','listing').json()
                 if not isinstance(data,dict) or not isinstance(data.get('products'),list):raise ValueError('Unrecognized Shopify response')
                 rows=data['products']
                 for p in rows:
@@ -144,7 +165,7 @@ class CatalogCrawler:
                 target=pending.pop(0)
                 if target in visited:continue
                 if len(visited)+len(pages)>=self.max_pages:raise ValueError('Sitemap page limit reached')
-                visited.add(target);root=ET.fromstring(self.fetch(target).body)
+                visited.add(target);root=ET.fromstring(self.fetch(target,'sitemap').body)
                 kind=root.tag.rsplit('}',1)[-1]
                 locs=[e.text for e in root.iter() if e.tag.rsplit('}',1)[-1]=='loc' and e.text]
                 if kind=='sitemapindex':pending.extend(locs)
