@@ -168,6 +168,8 @@ def public_summary(result):
             lines.append('  - Coverage: configured report codes only; this does not establish complete discovery of new GLO reports.')
         for code in public_diagnostics(name,check.get('detail',{}),state):
             lines.append(f'  - Diagnostic: {code}. {DIAGNOSTICS[code]}')
+        if name=='catalog':
+            lines.extend(public_catalog_diagnostics(check.get('detail',{})))
     if not result.get('checks'):
         lines.append('- Checks did not complete. Check the failed setup/run step and the activation instructions.')
         types={'ValueError':'invalid_monitor_input','TypeError':'monitor_type_error','OperationalError':'database_operation_failed','FileNotFoundError':'required_file_missing'}
@@ -181,6 +183,36 @@ def public_summary(result):
             'Unverified COAs, unresolved identities and medical claims remain flagged for review.',
             'A COA does not prove sterility, clinical safety, efficacy, or safe peptide combinations.']
     return '\n'.join(lines)+'\n'
+
+
+def public_catalog_diagnostics(detail):
+    """Never stringify arbitrary transport fields, paths, headers or URLs into public logs."""
+    if not isinstance(detail,dict):return []
+    trace=detail.get('catalog_diagnostics',{})
+    if not isinstance(trace,dict):trace={}
+    result=[]
+    stage=trace.get('stage')
+    if stage in ('robots','homepage','listing','sitemap','product_page','cooldown'):
+        result.append('  - Catalog request stage: '+stage+'.')
+    count=trace.get('request_count')
+    if type(count) is int and 0<=count<=10000:result.append(f'  - Catalog HTTP attempts (including redirects): {count}.')
+    status=trace.get('http_status')
+    if type(status) is int and 100<=status<=599:result.append(f'  - Last catalog HTTP status: {status}.')
+    streak=detail.get('consecutive_429')
+    if type(streak) is int and 1<=streak<=100000:result.append(f'  - Consecutive rate-limited scans: {streak}.')
+    delay=detail.get('cooldown_seconds')
+    if type(delay) in (int,float) and 0<=delay<=10**10:
+        import math
+        result.append(f'  - Cooldown selected at the last 429: {math.ceil(delay)} seconds.')
+    value=detail.get('retry_at')
+    if isinstance(value,str):
+        try:
+            moment=datetime.fromisoformat(value)
+            if moment.tzinfo is not None:
+                result.append('  - Next catalog eligibility: '+moment.astimezone(ZONE).isoformat()+
+                              ' (America/Boise); the next scheduled run after this time may check it.')
+        except (ValueError,OverflowError):pass
+    return result
 
 
 def private_config(root,override=None):

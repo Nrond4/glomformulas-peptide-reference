@@ -45,18 +45,28 @@ def daily(db,state_dir='work',live=False,services=None):
             cooldown=db.execute('SELECT retry_at FROM source_backoff WHERE component=?',(name,)).fetchone() if live else None
             if cooldown and datetime.fromisoformat(cooldown['retry_at'])>datetime.now(timezone.utc):
                 detail={'status':'deferred','reason':'Source returned HTTP 429 previously; cooldown is still active','retry_at':cooldown['retry_at']}
+                if name=='catalog':
+                    detail['catalog_diagnostics']={'stage':'cooldown','request_count':0}
+                    previous=db.execute('SELECT consecutive_429,delay_seconds FROM catalog_rate_state WHERE id=1').fetchone()
+                    if previous:detail.update(consecutive_429=previous[0],cooldown_seconds=previous[1])
             else:
                 with db:detail=operation()
             detail={} if detail is None else detail
             outcome=detail.get('status',success) if isinstance(detail,dict) else success
         except (FetchError,FileNotFoundError,ImportError) as exc:
             outcome='blocked';detail={'reason':str(exc) if isinstance(exc,(FetchError,ImportError)) else 'Required private source snapshot is missing'}
+            if name=='catalog' and hasattr(exc,'catalog_diagnostics'):detail['catalog_diagnostics']=exc.catalog_diagnostics
             if isinstance(exc,FetchError) and exc.status==429:
-                retry=(datetime.now(timezone.utc)+timedelta(seconds=exc.retry_after_seconds or 3600)).isoformat()
-                detail['retry_at']=retry
-                with db:db.execute('INSERT INTO source_backoff VALUES(?,?,?) ON CONFLICT(component) DO UPDATE SET retry_at=excluded.retry_at,reason=excluded.reason',(name,retry,'HTTP 429'))
+                if name=='catalog':
+                    from .catalog_http import register_limit
+                    with db:detail.update(register_limit(db,exc.retry_after_seconds))
+                else:
+                    retry=(datetime.now(timezone.utc)+timedelta(seconds=exc.retry_after_seconds or 3600)).isoformat()
+                    detail['retry_at']=retry
+                    with db:db.execute('INSERT INTO source_backoff VALUES(?,?,?) ON CONFLICT(component) DO UPDATE SET retry_at=excluded.retry_at,reason=excluded.reason',(name,retry,'HTTP 429'))
         except Exception as exc:
             outcome='failed';detail={'reason':str(exc) if isinstance(exc,ValueError) else type(exc).__name__}
+            if name=='catalog' and hasattr(exc,'catalog_diagnostics'):detail['catalog_diagnostics']=exc.catalog_diagnostics
         check={'component':name,'status':outcome,'detail':detail,'checked_at':now()}
         checks.append(check)
         with db:db.execute('INSERT INTO source_checks(run_id,component,status,checked_at,detail_json) VALUES(?,?,?,?,?)',(rid,name,outcome,check['checked_at'],encoded(detail)))
@@ -70,10 +80,17 @@ def daily(db,state_dir='work',live=False,services=None):
     if live:
         def catalog_live():
             from .live_catalog import CatalogCrawler
-            payload=services.get('catalog',lambda:CatalogCrawler().run(config.get('CATALOG_ADAPTER','auto')))()
-            changes=import_catalog(db,payload)
-            save_json(imports/'catalog.json',payload)
-            return {'changes':len(changes),'products':len(payload['products']),'scope':payload.get('scope'),'freshness':'live'}
+            from .catalog_http import reset_limits
+            crawler=CatalogCrawler()
+            try:
+                payload=services.get('catalog',lambda:crawler.run(config.get('CATALOG_ADAPTER','auto')))()
+                changes=import_catalog(db,payload)
+                save_json(imports/'catalog.json',payload)
+                reset_limits(db)
+            except Exception as exc:
+                if not hasattr(exc,'catalog_diagnostics'):exc.catalog_diagnostics=crawler.diagnostics()
+                raise
+            return {'changes':len(changes),'products':len(payload['products']),'scope':payload.get('scope'),'freshness':'live','catalog_diagnostics':crawler.diagnostics()}
         stage('catalog',catalog_live)
         def supplier_live():
             payload=services.get('supplier',fetch_public_sheet)()

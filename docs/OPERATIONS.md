@@ -1,3 +1,46 @@
+# Catalog diagnostics and rate limits — Phase 1
+
+This section describes the proposed catalog-only handling. It does not change Google Docs publishing, Google authorization, secrets, repository variables, or the GitHub daily schedule. The deployed GitHub workflow remains **8:00 AM America/Boise**, including daylight saving. The older standalone-host instructions below are separate; follow `docs/GITHUB_ACTIONS.md` for GitHub operation and the existing Google publishing guide for that integration.
+
+## What happens after a catalog 429
+
+The catalog transport makes one attempt per request. The first HTTP 429 immediately ends that scan: it does not retry the request, try another endpoint, change identities, or continue product-page downloads. Other catalog connection/server failures also stop after one transport attempt. Supplier and Freedom clients retain their existing retry and pacing behavior.
+
+The next catalog eligibility is the later of the server's `Retry-After` and our local backoff:
+
+| Consecutive rate-limited scans | Local minimum | Extra randomized delay |
+| --- | --- | --- |
+| First | 24 hours | 0–1 hour |
+| Second | 48 hours | 0–1 hour |
+| Third | 96 hours | 0–1 hour |
+| Fourth and later | 7 days | Local delay capped at 7 days |
+
+Numeric and HTTP-date `Retry-After` values are supported. Date intervals round up so the catalog never retries fractionally early. A missing, invalid, zero or past value does not remove the local minimum. A server instruction longer than seven days is honored; seven days caps only the **local** policy. Unrepresentably distant dates are held until the maximum representable date, requiring operator review rather than an early retry.
+
+Eligibility does not trigger a separate job. The next existing scheduled run **after** that time can attempt the catalog. For example, a 24-hour cooldown plus jitter can skip the following day's 8 AM check. Manual runs during cooldown make zero catalog requests while the other independent checks and existing publishing stages can continue. Do not clear the cooldown or repeatedly dispatch runs to work around it.
+
+Backoff streaks survive blocked/deferred/failed scans and reset only after a validated complete catalog has been imported successfully. A new additive `catalog_rate_state` table stores the streak and chosen delay; the existing `source_backoff` table stores the eligibility. Both travel inside the existing encrypted database artifact. No reseeding, database replacement, encryption-key change or new service is required. Old state restores normally and acquires the new table through the existing additive schema mechanism; its preexisting cooldown is still honored.
+
+## Robots and request pacing
+
+Catalog requests, including same-host redirects, are spaced at least five seconds apart. Published matching `Crawl-delay` and `Request-rate` rules can increase that interval. The latter is applied conservatively as uniform spacing (for example `1/20` means at least 20 seconds between requests). Decimal crawl delays are supported. The most specific matching user-agent groups determine pacing; matching groups with equal specificity use their strictest interval. Access restrictions are checked before requests and redirects with the existing robots permission parser.
+
+A malformed matching pacing directive stops the scan for review rather than silently ignoring it. A required interval longer than 60 seconds also stops the scan before another request, avoiding a long sleep through the existing source-step timeout. It does not disregard the rule. Robots 429/403 failures stop access; the existing robots-404 behavior remains unchanged. This is conservative access handling, not proof of permission to crawl; the owner's rules still govern.
+
+## Reading the diagnostics
+
+Public summaries expose only fixed stage names (`robots`, `homepage`, `listing`, `sitemap`, `product_page`, or `cooldown`), request-attempt counts including redirects, the last available HTTP status, the consecutive-429 count, the chosen cooldown and the next eligibility in Mountain Time. Connection failures may have no HTTP status. A deferred scan explicitly reports zero attempts and does not claim to have checked whether the server still returns 429.
+
+The encrypted detailed report retains a bounded request trace: exact URLs, stage, status, elapsed time and a small header allowlist (`Retry-After`, `Date`, standard/common rate-limit headers, `Server`, and `CF-Mitigated`). Cookies, authorization headers, entire header dumps and response bodies are excluded. Exact URLs may contain private product paths or query values: never copy the raw trace into public issues or logs. The existing Actions entrypoint seals these details in `detail.enc`; database/source reports remain in encrypted state. Local standalone reports are private plaintext files and must stay in protected storage. Do not upload those files directly.
+
+In a failed scan, successful page reads and a partial product list are **not** promoted to a verified snapshot. The previous catalog, saved import and historical records remain intact. No product is discontinued from a failed/incomplete scan. A successful complete snapshot still yields disappearance candidates requiring the existing review process. Source outcomes are recorded in the existing `source_checks` audit history.
+
+## Review and deployment considerations
+
+This phase adds neither caching nor alternate feeds/endpoints, and it does not remove the existing full-catalog/product-page work. Slow scans can still hit the source-step timeout. Host-based blocking may persist regardless of pacing. No live access success is promised by mocked tests.
+
+Review the draft PR and offline test results before separately approving merge/deployment. Keep the existing encrypted artifacts as recovery points. After an approved deployment, inspect the next eligible scheduled run's stage/count/status and encrypted headers before recommending another change. Do not manually trigger a live diagnostic run without explicit authorization. If the owner does not permit this access, pursue an owner-approved feed or manual export in a separately approved phase.
+
 # Running and maintaining the reference system
 
 For the new 8:00 AM Mountain GitHub Actions option, follow [Activate daily GitHub monitoring](GITHUB_ACTIONS.md). The systemd instructions below describe the earlier local-host alternative; do not activate both schedulers against the same baseline.
