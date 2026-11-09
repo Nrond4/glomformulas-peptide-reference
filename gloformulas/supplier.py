@@ -6,7 +6,7 @@ import re
 from urllib.parse import urlparse
 from .core import source,key,now,encoded,flag,audit
 from .config import SHEET_URL
-from .http import Client
+from .http import Client,FetchError
 
 
 def normalize(payload):
@@ -64,9 +64,9 @@ def fetch_public_sheet(client=None):
     sheet_id=SHEET_URL.split('/d/')[1].split('/')[0]
     if sheet_id.startswith('CONFIGURE'):raise ValueError('Supplier spreadsheet URL has not been configured')
     target=f'https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv&gid='+str(config.get('SHEET_GID',0))
-    client=client or Client({'docs.google.com','drive.google.com','googleusercontent.com'})
+    client=client or Client({'docs.google.com','drive.google.com','googleusercontent.com'},subdomain_roots={'googleusercontent.com'})
     response=client.get(target)
-    if '<html' in response.text[:500].lower():raise ValueError('Supplier export is not public CSV; use connected snapshot or read-only Google authorization')
+    if 'text/html' in response.headers.get('content-type','').lower() or '<html' in response.text[:1024].lower() or '<!doctype html' in response.text[:1024].lower():raise FetchError('Supplier export is not public CSV; use connected snapshot or read-only Google authorization')
     payload={'values':list(csv.reader(io.StringIO(response.text)))}
     normalize(payload)
     return payload

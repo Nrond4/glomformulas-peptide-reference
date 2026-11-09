@@ -15,8 +15,9 @@ from .monitor_state import StateError,pack_state,restore_state,encrypt,decrypt,v
 
 ZONE=ZoneInfo('America/Boise')
 COMPONENTS=('google_read_sync','catalog','supplier','freedom','literature','guide','folder')
-STATUSES={'checked','completed','completed_checks','replayed','blocked','failed','partial','not_configured','not_attempted','candidates_pending_review','offline_validation','running','interrupted','setup_required'}
+STATUSES={'deferred','checked','completed','completed_checks','replayed','blocked','failed','partial','not_configured','not_attempted','candidates_pending_review','offline_validation','running','interrupted','setup_required'}
 REASONS={
+    'deferred':'Request postponed to respect the previous source rate limit.',
     'checked':'Source read completed.', 'completed':'Source check completed.',
     'replayed':'Saved source only; this was not a fresh source check.',
     'blocked':'Source could not be reached/read, or its connection/dependency is not ready.',
@@ -29,6 +30,11 @@ REASONS={
 
 
 DIAGNOSTICS={
+    'source_sign_in_required':'Source requires sign-in; no unattended read authorization is configured.',
+    'source_redirect_rejected':'Source redirected outside its approved file-serving hosts.',
+    'lookup_navigation_timeout':'Freedom lookup page did not finish loading in time.',
+    'lookup_controls_timeout':'Freedom search controls did not respond in time.',
+    'lookup_results_timeout':'Freedom search did not produce readable report links in time; this is not proof of missing COAs.',
     'http_401':'Source requires authorization.',
     'http_403':'Source denied the automated request.',
     'http_404':'Source endpoint was not found.',
@@ -66,8 +72,12 @@ def public_diagnostics(component,detail,status):
     codes=set()
     for reason in reasons:
         for code in re.findall(r'\bHTTP[ :]+(401|403|404|429|500|502|503|504)\b',reason,re.I):codes.add('http_'+code)
+        if 'Source requires sign-in;' in reason:codes.add('source_sign_in_required')
+        if 'Refused URL outside the configured HTTPS source hosts' in reason:codes.add('source_redirect_rejected')
+        for step in ('navigation','controls','results'):
+            if 'Freedom lookup '+step+' timed out' in reason:codes.add('lookup_'+step+'_timeout')
         if 'connection unavailable' in reason.lower():codes.add('connection_unavailable')
-        if 'TimeoutError' in reason or 'timed out' in reason.lower():codes.add('lookup_timeout' if component=='freedom' else 'source_timeout')
+        if ('TimeoutError' in reason or 'timed out' in reason.lower()) and not any(c.startswith('lookup_') for c in codes):codes.add('lookup_timeout' if component=='freedom' else 'source_timeout')
         if reason=='ParseError':codes.add('catalog_xml_unreadable' if component=='catalog' else 'unclassified_source_error')
         if reason=='JSONDecodeError':codes.add('source_json_unreadable')
         if 'disallowed by robots.txt' in reason:codes.add('robots_excluded')
@@ -75,7 +85,7 @@ def public_diagnostics(component,detail,status):
         if any(t in reason for t in ('pagination','page limit','scope changed','total missing','scan incomplete','page budget')):codes.add('catalog_incomplete')
         if 'not public CSV' in reason:codes.add('supplier_private_or_non_csv')
         if 'Supplier header missing' in reason:codes.add('supplier_header_missing')
-        if 'No readable lab PDF results' in reason:codes.add('freedom_results_unreadable')
+        if ('No readable lab PDF results' in reason or 'no readable official PDF links' in reason):codes.add('freedom_results_unreadable')
         if 'Required private source snapshot is missing' in reason:codes.add('snapshot_missing')
         if 'No module named' in reason:codes.add('optional_dependency_missing')
     if status=='not_configured':codes.add('source_not_configured')
