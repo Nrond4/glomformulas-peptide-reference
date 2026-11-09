@@ -117,6 +117,7 @@ def reconcile(root,service=None):
     return status
 
 def main():
+    os.umask(0o077)
     parser=argparse.ArgumentParser();parser.add_argument('operation',choices=['prepare','apply','review','reconcile'])
     parser.add_argument('--state',required=True);parser.add_argument('--out',required=True);args=parser.parse_args()
     try:
