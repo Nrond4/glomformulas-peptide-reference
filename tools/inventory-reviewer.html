@@ -1,0 +1,30 @@
+<!doctype html><meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'">
+<title>Private identity inventory reviewer</title>
+<h1>Private identity inventory reviewer</h1>
+<p>Use this downloaded file offline in a dedicated browser tab. Keep the tab open: reloading loses the private key. No network requests are permitted. Records require scientific review; a reviewed status does not certify vial contents.</p>
+<button id="generate">Generate one-time recipient</button>
+<p>Copy this public JWK into the approved workflow dispatch:</p><textarea id="public" rows="8" cols="80" readonly></textarea>
+<p>After the run, extract the downloaded artifact and select inventory.enc.json. Verify repository and session against the approved run before reviewing.</p>
+<input type="file" id="file" accept=".json"><pre id="result"></pre>
+<script>
+let keys;
+const decode = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
+document.getElementById('generate').onclick = async () => {
+  if (keys) return;
+  keys = await crypto.subtle.generateKey({name:'RSA-OAEP',modulusLength:3072,publicExponent:new Uint8Array([1,0,1]),hash:'SHA-256'},false,['wrapKey','unwrapKey']);
+  document.getElementById('public').value = JSON.stringify(await crypto.subtle.exportKey('jwk',keys.publicKey));
+};
+document.getElementById('file').onchange = async e => {
+  const output = document.getElementById('result');
+  try {
+    if (!keys) throw Error();
+    const envelope = JSON.parse(await e.target.files[0].text());
+    const header = JSON.parse(envelope.header);
+    if (header.format !== 'glo-inventory-envelope-v1') throw Error();
+    const key = await crypto.subtle.unwrapKey('raw',decode(envelope.wrapped_key),keys.privateKey,{name:'RSA-OAEP'}, {name:'AES-GCM'},false,['decrypt']);
+    const plain = await crypto.subtle.decrypt({name:'AES-GCM',iv:decode(envelope.nonce),additionalData:new TextEncoder().encode(envelope.header)},key,decode(envelope.ciphertext));
+    output.textContent = JSON.stringify(header,null,2)+'\n'+JSON.stringify(JSON.parse(new TextDecoder().decode(plain)),null,2);
+  } catch { output.textContent = 'Decryption failed. Check the recipient tab and approved run; no details were sent anywhere.'; }
+};
+</script>

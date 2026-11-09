@@ -1,0 +1,48 @@
+name: Read-only identity inventory
+on:
+  workflow_dispatch:
+    inputs:
+      recipient:
+        description: 'Public JWK from the local browser reviewer; approval required before dispatch'
+        required: true
+        type: string
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: gloformulas-daily-database
+  cancel-in-progress: false
+jobs:
+  inventory:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install '.[monitor]'
+      - name: Inventory temporary copy without migrations or publishing
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GLO_STATE_KEY: ${{ secrets.GLO_STATE_KEY }}
+          INVENTORY_RECIPIENT: ${{ inputs.recipient }}
+          INVENTORY_OUT: ${{ runner.temp }}/glo-inventory-output
+        run: python -m gloformulas.identity_inventory
+      - uses: actions/upload-artifact@v4
+        with:
+          name: glo-identity-inventory-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/glo-inventory-output/inventory.enc.json
+            ${{ runner.temp }}/glo-inventory-output/summary.json
+          retention-days: 1
+          if-no-files-found: error
+          compression-level: 0
+      - name: Show aggregate counts only
+        run: cat "$RUNNER_TEMP/glo-inventory-output/summary.json" >> "$GITHUB_STEP_SUMMARY"
+      - name: Clean temporary output
+        if: always()
+        run: rm -rf -- "$RUNNER_TEMP/glo-inventory-output"
