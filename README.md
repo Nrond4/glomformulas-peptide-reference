@@ -81,3 +81,7 @@ Medical categories are researched uses, concurrent-use evidence, precautions and
 The optional Google API publisher remains separate from daily checks. It uses the original revision number to avoid overwriting concurrent edits and touches only approved claim paragraphs with simple formatting. Automatic table updates and new product sections are still a later formatting-aware extension. No unverified medical information is published.
 
 See [Operations](docs/OPERATIONS.md) for commands, schedule preparation and recovery; [Verification and research](docs/VERIFICATION.md) for source rules, review steps and known limitations.
+
+## Optional Google Docs publishing
+
+Publishing is disabled by default. The guarded publisher maintains a factual updates section, preserving the existing guide. Start with a separate test copy and follow the [browser-only Google connection and recovery instructions](docs/GOOGLE_DOCS_PUBLISHING.md). Live writes require a successful test receipt and explicit activation.

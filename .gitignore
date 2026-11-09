@@ -11,3 +11,6 @@ service-account*.json
 build/
 dist/
 *.enc
+
+# Short-lived Google federation files must never be committed.
+gha-creds-*.json

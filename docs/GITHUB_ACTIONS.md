@@ -1,3 +1,7 @@
+# Optional Google Docs publisher (version 0.4)
+
+The source monitor remains read-only. A separate, default-disabled publishing stage can now maintain a factual updates section after a test-copy gate. Follow [the browser-only connection, activation and recovery guide](GOOGLE_DOCS_PUBLISHING.md). Earlier statements below about no Google credentials or document writes describe the monitor-only configuration; enabling the optional publisher adds short-lived Google federation after source checking. Existing Google source synchronization remains disabled.
+
 # Activate daily GitHub monitoring
 
 This is the new unattended option. You do not need paid hosting or another service. The workflow uses a standard GitHub-hosted Linux runner and GitHub artifacts. It does not ask for a personal access token or Google credentials, and it cannot publish the original Google Doc.
