@@ -2,7 +2,7 @@
 import hashlib
 import io
 import re
-from urllib.parse import urljoin,urlparse,urlencode,unquote
+from urllib.parse import urljoin,urlparse,urlencode
 from .http import Client,FetchError
 from .core import source,key,now,encoded,flag
 from .live_catalog import Page
@@ -19,6 +19,11 @@ def glo_code(value):
     return value
 
 
+def direct_report_url(code):
+    # Official public route demonstrated by a supplied GLO report, not code enumeration.
+    return 'https://coas.'+HOST+'/'+glo_code(code)+'.pdf'
+
+
 def report_links(content,base=LOOKUP):
     links=[]
     for href,label in Page(content).anchors:
@@ -31,15 +36,15 @@ def report_links(content,base=LOOKUP):
 
 LABELS={
  'search_code':r'Search\s*Code', 'batch':r'(?:Batch(?:\s*/\s*Lot)?|Lot)(?:\s*(?:Number|No\.?))?',
- 'report_date':r'(?:Report\s*Date|Date\s*(?:Issued|Reported)|Issued\s*Date)',
- 'identity':r'(?:Peptide\s*Identity|Compound(?:\(s\))?\s*Identified|Identity(?:\s*Result)?|Compound\s*Name)',
- 'purity':r'(?:HPLC\s*)?Purity', 'measured_content':r'(?:Net\s*(?:Peptide\s*)?Content|Measured\s*Content)',
+ 'report_date':r'(?:Reported\s*Date|Report\s*Date|Date\s*(?:Issued|Reported)|Issued\s*Date)',
+ 'identity':r'(?:Peptide\s*Identity|Compound(?:\(s\))?\s*Identified|Identity(?:\s*Result|[ \t]*\(LC-MS\))?|Compound\s*Name)',
+ 'purity':r'(?:HPLC\s*)?Purity(?:[ \t]*\(HPLC(?:-UV)?\))?', 'measured_content':r'(?:Net\s*(?:Peptide\s*)?Content(?:[ \t]+Average)?|Measured\s*Content)',
  'company':r'(?:Company(?:\s*Name)?|Client(?:\s*Name)?)'}
 
 def parse_text(text):
     fields={}
     for name,label in LABELS.items():
-        matches=re.findall(r'(?im)^[ \t]*(?:'+label+r')[ \t]*(?::[ \t]*|\t+|[ ]{2,}|\r?\n[ \t]*)([^\n\r]+)',text)
+        matches=re.findall(r'(?im)^[ \t]*(?:'+label+r')[ \t]*(?::[ \t]*|\t+|[ ]+|\r?\n[ \t]*)([^\n\r]+)',text)
         values=sorted({m.strip() for m in matches if m.strip()})
         if len(values)==1:fields[name]=values[0]
         elif len(values)>1:fields[name]=None;fields.setdefault('extraction_flags',[]).append('conflicting_'+name)
@@ -59,14 +64,35 @@ def extract_pdf(body):
     if len(reader.pages)>50:raise ValueError('Report page limit exceeded')
     pages=[{'page':i+1,'text':page.extract_text() or ''} for i,page in enumerate(reader.pages)]
     if not any(p['text'].strip() for p in pages):raise ValueError('Scanned report needs OCR and manual field confirmation')
-    return parse_text('\n'.join(p['text'] for p in pages)),pages
+    fields=parse_text('\n'.join(p['text'] for p in pages))
+    if not fields.get('search_code'):
+        # Some table PDFs emit labels/values in an unreadable order in plain mode.
+        # Preserve both renderings and only fill previously unreadable fields.
+        for record,page in zip(pages,reader.pages):record['layout_text']=page.extract_text(extraction_mode='layout') or ''
+        layout=parse_text('\n'.join(p['layout_text'] for p in pages))
+        for name,value in layout.items():
+            if name!='extraction_flags' and not fields.get(name) and value and 'conflicting_'+name not in fields.get('extraction_flags',[]):fields[name]=value
+        fields['extraction_flags']=sorted(set(fields.get('extraction_flags',[])+layout.get('extraction_flags',[])))
+    return fields,pages
 
 
 class FreedomClient:
-    def __init__(self,client=None,rendered=None):
-        self.client=client or Client(HOSTS);self.rendered=rendered
+    def __init__(self,client=None,rendered=None,prefer_direct=True):
+        self.client=client or Client(HOSTS);self.rendered=rendered;self.prefer_direct=prefer_direct;self._prefetched={}
     def search(self,code=None,company='GloFormulas'):
-        if code is not None:code=glo_code(code)
+        if code is not None:
+            code=glo_code(code)
+            if self.prefer_direct:
+                target=direct_report_url(code)
+                try:response=self.client.get(target)
+                except FetchError as exc:
+                    # Only a missing route falls back to the public lookup. Never try
+                    # another route to evade rate limits or an access denial.
+                    if exc.status!=404:raise
+                else:
+                    if not response.body.startswith(b'%PDF'):raise ValueError('Official report download did not return PDF bytes')
+                    self._prefetched[target]=response
+                    return [target]
         if re.sub(r'[^a-z]','',company.lower())!='gloformulas':raise ValueError('Only GloFormulas company discovery is permitted')
         if self.rendered:
             content=self.rendered(code=code,company=company)
@@ -86,14 +112,27 @@ class FreedomClient:
             if target in seen:continue
             seen.add(target)
             try:
-                response=self.client.get(target)
+                response=self._prefetched.pop(target,None)
+                if response is None:response=self.client.get(target)
                 # Client enforces final redirect hosts too. Lab authenticity requires the actual PDF bytes.
                 if urlparse(response.url).hostname not in HOSTS:raise ValueError('Report left official lab hosts')
-                fields,pages=extract_pdf(response.body)
-                code=glo_code(fields.get('search_code',''))
-                if requested and code!=glo_code(requested):raise ValueError('Returned report search code differs from request')
+                if not response.body.startswith(b'%PDF'):raise ValueError('Official report download did not return PDF bytes')
                 digest=hashlib.sha256(response.body).hexdigest()
                 db.execute('INSERT OR IGNORE INTO report_artifacts VALUES(?,?,?,?,?,?)',(digest,response.body,'application/pdf',response.url,now(),len(response.body)))
+                try:fields,pages=extract_pdf(response.body)
+                except Exception:
+                    flag(db,'report_artifact',digest,'pdf_extraction_review_required','Official-host PDF retained privately; text extraction needs review.')
+                    raise ValueError('Lab PDF extraction failed; original PDF retained for review') from None
+                if not fields.get('search_code'):
+                    flag(db,'report_artifact',digest,'printed_search_code_unreadable','Printed search code could not be read; do not substitute the filename or requested code.')
+                    raise ValueError('Printed search code could not be read; original PDF retained for review')
+                try:code=glo_code(fields['search_code'])
+                except ValueError:
+                    flag(db,'report_artifact',digest,'non_glo_printed_code','Printed report code is not GLO-prefixed; no GloFormulas report was accepted.')
+                    raise ValueError('Printed report code is not GLO-prefixed; original PDF retained for review') from None
+                if requested and code!=glo_code(requested):
+                    flag(db,'report_artifact',digest,'search_code_mismatch','Printed search code differs from requested code; no report was accepted.')
+                    raise ValueError('Returned report search code differs from request')
                 artifact=source(db,'freedom_primary_report',response.url,{'sha256':digest,'pages':pages,'fields':fields})
                 exp=expected.get(code,{})
                 company_match=re.sub(r'[^a-z]','',fields.get('company','').lower())=='gloformulas'
@@ -112,7 +151,7 @@ class FreedomClient:
                 records.append({'search_code':code,'status':result['verification_status'],'attribution':result['attribution']})
             except Exception as exc:
                 failures.append({'url':target,'reason':str(exc) if isinstance(exc,(ValueError,FetchError)) else type(exc).__name__})
-        return {'records':records,'failures':failures,'status':'completed' if records and not failures else ('partial' if records else 'blocked'),'scope':'GLO-only','vendor_batch_linkage':'exact reviewed expectation required'}
+        return {'records':records,'failures':failures,'status':'completed' if records and not failures else ('partial' if records else 'blocked'),'scope':'GLO-only','coverage':'tracked_codes' if codes else 'company_lookup','vendor_batch_linkage':'exact reviewed expectation required'}
 
 
 def lookup_page(page,*,code=None,company='GloFormulas',timeout=20000):
