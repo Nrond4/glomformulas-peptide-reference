@@ -153,7 +153,7 @@ def public_summary(result):
     status=result.get('status')
     status=status if status in STATUSES else 'failed'
     lines=[f'# GloFormulas daily check — {stamp()}',f'Result: **{status}**.',
-           'Original Google Doc: **not modified**. No medical claim is automatically approved.',
+           'Source monitor: read-only. Optional Google Docs publishing is reported separately. No medical claim is automatically approved.',
            'Only completed checks contribute to change counts. Unavailable sources may contain unseen changes.','']
     counts=result.get('changes',{})
     for key,label in [('catalog_changes','Catalog changes'),('supplier_changes','Supplier changes'),('research_candidates','New literature leads'),('flags','New review flags'),('lab_fetches','Lab reports collected')]:
@@ -289,7 +289,7 @@ def main():
             from .actions_store import GitHubStore
             store=GitHubStore(os.environ['GITHUB_REPOSITORY'],os.environ.get('GH_TOKEN'),current_run=os.environ.get('GITHUB_RUN_ID'))
             restore_for_actions(args.state,password(),store,args.bootstrap,os.environ.get('GLO_SEED_TAG') or 'monitor-seed')
-            print('Encrypted baseline restored and checked. Original Google Doc publishing is disabled.')
+            print('Encrypted baseline restored and checked. Source monitoring is read-only; optional Docs publishing is gated separately.')
         elif args.command=='run':return run_monitor(args.state,args.out)
         elif args.command=='finalize':finalize(args.state,args.out,password());print('Encrypted state and dated report prepared.')
         else:

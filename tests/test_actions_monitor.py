@@ -138,7 +138,7 @@ class ActionsTests(unittest.TestCase):
         self.assertEqual(wf['concurrency']['cancel-in-progress'],'false')
         text=Path('.github/workflows/daily-monitor.yml').read_text();self.assertNotIn('publish-plan',text);self.assertNotIn('google-sync',text);self.assertIn("github.ref == 'refs/heads/main'",text)
         uploads=[s for s in wf['jobs']['monitor']['steps'] if s.get('uses','').startswith('actions/upload-artifact')]
-        self.assertEqual(len(uploads),2)
+        self.assertEqual(len(uploads),3)
         for step in uploads:self.assertNotIn('reference.sqlite',step['with']['path']);self.assertNotIn('source-config',step['with']['path'])
 
 @unittest.skipUnless(importlib.util.find_spec('cryptography'),'Install monitor extra for encryption tests')
